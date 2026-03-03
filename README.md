@@ -25,7 +25,13 @@ cd local-whisper
 ./install.sh
 ```
 
-The installer handles everything: Homebrew dependencies, building whisper.cpp, downloading the model, detecting your microphone, and setting up Karabiner + Hammerspoon configs.
+The installer handles everything: Homebrew dependencies, building whisper.cpp, downloading the model, detecting your microphone, setting up Karabiner + Hammerspoon, granting permissions, and choosing your trigger key.
+
+To change the trigger key or re-run setup later:
+
+```bash
+./setup.sh
+```
 
 <details>
 <summary>Manual install (if you prefer)</summary>

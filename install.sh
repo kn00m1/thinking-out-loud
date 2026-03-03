@@ -24,7 +24,6 @@ WHISPER_CPP_DIR="$HOME/whisper.cpp"
 WHISPER_DICTATE_DIR="$HOME/whisper-dictate"
 WHISPER_MODEL="medium"
 HAMMERSPOON_DIR="$HOME/.hammerspoon"
-KARABINER_RULES_DIR="$HOME/.config/karabiner/assets/complex_modifications"
 
 # ─── Preflight ───────────────────────────────────────────────────────────────
 echo ""
@@ -203,40 +202,8 @@ else
     fi
 fi
 
-# ─── Step 6: Install Karabiner rule ─────────────────────────────────────────
+# ─── Step 6: Setup (permissions, shortcut, Karabiner activation, HS CLI) ────
 echo ""
-info "Step 6/6: Installing Karabiner-Elements rule..."
-
-mkdir -p "$KARABINER_RULES_DIR"
-
-if [[ -f "$KARABINER_RULES_DIR/local-whisper.json" ]]; then
-    ok "Karabiner rule already installed"
-else
-    cp "$SCRIPT_DIR/karabiner/local-whisper.json" "$KARABINER_RULES_DIR/local-whisper.json"
-    ok "Karabiner rule installed"
-fi
-
-# ─── Permissions reminder ───────────────────────────────────────────────────
+info "Step 6/6: Running setup (permissions, shortcut config, activation)..."
 echo ""
-echo -e "${BOLD}────────────────────────────────────────────────${NC}"
-echo -e "${BOLD}Setup complete!${NC} A few manual steps remain:"
-echo -e "${BOLD}────────────────────────────────────────────────${NC}"
-echo ""
-echo -e "1. ${YELLOW}Grant permissions${NC} in System Settings > Privacy & Security:"
-echo ""
-echo "   Karabiner-Elements  → Input Monitoring"
-echo "   Hammerspoon         → Accessibility"
-echo "   Terminal             → Microphone, Accessibility"
-echo ""
-echo -e "2. ${YELLOW}Enable Hammerspoon CLI${NC} — open Hammerspoon console and run:"
-echo ""
-echo "   hs.ipc.cliInstall()"
-echo ""
-echo -e "3. ${YELLOW}Enable the Karabiner rule${NC}:"
-echo "   Open Karabiner-Elements > Complex Modifications > Add predefined rule"
-echo "   Enable \"Right Option: hold = record + transcribe\""
-echo ""
-echo -e "4. ${YELLOW}Reload Hammerspoon${NC} (click the menu bar icon > Reload Config)"
-echo ""
-echo -e "Then hold ${BOLD}Right Option${NC}, speak, and release!"
-echo ""
+bash "$SCRIPT_DIR/setup.sh"
