@@ -65,7 +65,7 @@ cat > "$RULE_FILE" << JSONEOF
                     },
                     "to": [
                         {
-                            "shell_command": "/bin/bash -lc '\$HOME/whisper-dictate/start_record.sh >> \${TMPDIR:-/tmp}/whisper-dictate/whisper-dictate.log 2>&1'"
+                            "shell_command": "/bin/bash -lc \"${HOME}/whisper-dictate/start_record.sh >> ${HOME}/whisper-dictate.log 2>&1\""
                         }
                     ],
                     "to_if_alone": [
@@ -75,7 +75,7 @@ cat > "$RULE_FILE" << JSONEOF
                     ],
                     "to_after_key_up": [
                         {
-                            "shell_command": "/bin/bash -lc '\$HOME/whisper-dictate/stop_transcribe.sh >> \${TMPDIR:-/tmp}/whisper-dictate/whisper-dictate.log 2>&1'"
+                            "shell_command": "/bin/bash -lc \"${HOME}/whisper-dictate/stop_transcribe.sh >> ${HOME}/whisper-dictate.log 2>&1\""
                         }
                     ],
                     "parameters": {
