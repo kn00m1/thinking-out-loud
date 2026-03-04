@@ -30,6 +30,7 @@ local TRIGGER_KEY = "rightCmd"
 -- User preference files
 local LANG_FILE = HOME .. "/.whisper_dictation_lang"
 local OUTPUT_FILE = HOME .. "/.whisper_dictation_output"
+local ACTIONS_FILE = HOME .. "/.hammerspoon/local_whisper_actions.lua"
 local LOG_FILE = WHISPER_TMP .. "/whisper-dictate.log"
 
 -- Timing
@@ -130,6 +131,206 @@ end
 
 local function statusLine()
     return string.format("[%s | %s | %s]", getLang():upper(), getOutputMode():upper(), MODEL_NAME)
+end
+
+local function trim(text)
+    return (text or ""):gsub("^%s+", ""):gsub("%s+$", "")
+end
+
+local function normalizeText(text)
+    return trim((text or ""):gsub("%s+", " "))
+end
+
+local function shellQuote(text)
+    return "'" .. tostring(text):gsub("'", "'\\''") .. "'"
+end
+
+local function expandPath(path)
+    if type(path) ~= "string" then return nil end
+    if path:sub(1, 2) == "~/" then
+        return HOME .. path:sub(2)
+    end
+    return path
+end
+
+local function ensureParentDir(path)
+    local parent = path:match("^(.*)/[^/]+$")
+    if not parent or parent == "" then return true end
+    local ok = os.execute("mkdir -p " .. shellQuote(parent))
+    return ok == true or ok == 0
+end
+
+--------------------------------------------------------------------------------
+-- Optional post-dictation actions (user config)
+--------------------------------------------------------------------------------
+
+local actionConfig = nil
+local actionConfigLoaded = false
+
+local function safeHookCall(label, fn, ctx)
+    local ok, err = pcall(fn, ctx)
+    if not ok then
+        log("actions: " .. label .. " failed: " .. tostring(err))
+    end
+end
+
+local function loadActionConfig()
+    if actionConfigLoaded then return actionConfig end
+    actionConfigLoaded = true
+
+    local chunk, err = loadfile(ACTIONS_FILE)
+    if not chunk then
+        if not tostring(err):match("No such file") then
+            log("actions: could not load config: " .. tostring(err))
+        end
+        return nil
+    end
+
+    local ok, cfg = pcall(chunk)
+    if not ok then
+        log("actions: config execution failed: " .. tostring(cfg))
+        return nil
+    end
+    if type(cfg) ~= "table" then
+        log("actions: config must return a table")
+        return nil
+    end
+
+    actionConfig = cfg
+    log("actions: loaded " .. ACTIONS_FILE)
+    return actionConfig
+end
+
+local function reloadActionConfig()
+    actionConfigLoaded = false
+    actionConfig = nil
+    return loadActionConfig()
+end
+
+local function buildActionContext(text, lang, mode)
+    local ctx = {
+        text = text,
+        originalText = text,
+        lang = lang,
+        outputMode = mode,
+        insert = true,
+        inserted = false,
+        timestamp = os.time(),
+        isoTime = os.date("!%Y-%m-%dT%H:%M:%SZ"),
+    }
+
+    function ctx:setText(newText)
+        if type(newText) ~= "string" then return end
+        self.text = normalizeText(newText)
+    end
+
+    function ctx:disableInsert()
+        self.insert = false
+    end
+
+    function ctx:enableInsert()
+        self.insert = true
+    end
+
+    function ctx:launchApp(appName)
+        if type(appName) ~= "string" or appName == "" then return false end
+        return hs.application.launchOrFocus(appName)
+    end
+
+    function ctx:appendToFile(path, line)
+        local resolved = expandPath(path)
+        if not resolved or resolved == "" then return false, "invalid path" end
+        if not ensureParentDir(resolved) then return false, "mkdir failed" end
+
+        local f = io.open(resolved, "a")
+        if not f then return false, "open failed" end
+        f:write(tostring(line or self.text or ""))
+        f:write("\n")
+        f:close()
+        return true
+    end
+
+    function ctx:runShell(command, inputText)
+        if type(command) ~= "string" or command == "" then
+            return false, "", "invalid command", 1
+        end
+
+        local token = tostring(os.time()) .. "_" .. tostring(math.random(1000000))
+        local stdinPath = WHISPER_TMP .. "/action_stdin_" .. token .. ".txt"
+        writeFile(stdinPath, tostring(inputText or self.text or ""))
+
+        local output, ok, kind, rc = hs.execute(command .. " < " .. shellQuote(stdinPath), true)
+        os.remove(stdinPath)
+        return ok, output, kind, rc
+    end
+
+    function ctx:notify(message)
+        hs.notify.new({ title = "local-whisper", informativeText = tostring(message) }):send()
+    end
+
+    function ctx:log(message)
+        log("action: " .. tostring(message))
+    end
+
+    return ctx
+end
+
+local function runActionList(actions, ctx)
+    if type(actions) ~= "table" then return end
+
+    for i, action in ipairs(actions) do
+        if type(action) == "function" then
+            safeHookCall("actions[" .. i .. "]", action, ctx)
+        elseif type(action) == "table" and type(action.run) == "function" then
+            local name = action.name or ("actions[" .. i .. "]")
+            local shouldRun = true
+
+            if type(action.when) == "function" then
+                local ok, res = pcall(action.when, ctx)
+                if not ok then
+                    shouldRun = false
+                    log("actions: " .. name .. ".when failed: " .. tostring(res))
+                else
+                    shouldRun = not not res
+                end
+            elseif type(action.pattern) == "string" then
+                shouldRun = ctx.text:match(action.pattern) ~= nil
+            end
+
+            if shouldRun then
+                safeHookCall(name, action.run, ctx)
+            end
+        end
+    end
+end
+
+local function runPreInsertActions(ctx)
+    local cfg = loadActionConfig()
+    if type(cfg) ~= "table" then return end
+
+    if type(cfg.beforeInsert) == "function" then
+        safeHookCall("beforeInsert", cfg.beforeInsert, ctx)
+    end
+    runActionList(cfg.actions, ctx)
+end
+
+local function runPostInsertActions(ctx)
+    local cfg = loadActionConfig()
+    if type(cfg) ~= "table" then return end
+
+    if type(cfg.afterInsert) == "function" then
+        safeHookCall("afterInsert", cfg.afterInsert, ctx)
+    end
+end
+
+WhisperActions = WhisperActions or {}
+function WhisperActions.reload()
+    local cfg = reloadActionConfig()
+    if cfg then
+        hs.notify.new({ title = "local-whisper", informativeText = "Action hooks reloaded" }):send()
+    else
+        hs.notify.new({ title = "local-whisper", informativeText = "No action hook config found" }):send()
+    end
 end
 
 --------------------------------------------------------------------------------
@@ -337,20 +538,40 @@ local function doFinalTranscription()
                 return
             end
 
-            -- Insert text at cursor
-            local mode = getOutputMode()
-            if mode == "paste" then
-                local oldClipboard = hs.pasteboard.getContents()
-                hs.pasteboard.setContents(text)
-                hs.eventtap.keyStroke({"cmd"}, "v")
-                hs.timer.doAfter(0.3, function()
-                    if oldClipboard then hs.pasteboard.setContents(oldClipboard) end
-                end)
-            else
-                hs.eventtap.keyStrokes(text)
+            local function insertTextAtCursor(insertText, mode)
+                if mode == "paste" then
+                    local oldClipboard = hs.pasteboard.getContents()
+                    hs.pasteboard.setContents(insertText)
+                    hs.eventtap.keyStroke({"cmd"}, "v")
+                    hs.timer.doAfter(0.3, function()
+                        if oldClipboard then hs.pasteboard.setContents(oldClipboard) end
+                    end)
+                else
+                    hs.eventtap.keyStrokes(insertText)
+                end
             end
 
-            setOverlayText(text)
+            local ctx = buildActionContext(normalizeText(text), lang, getOutputMode())
+            runPreInsertActions(ctx)
+
+            local finalText = normalizeText(ctx.text)
+            if finalText == "" then
+                log("final: empty text after actions")
+                hideOverlay()
+                return
+            end
+
+            if ctx.insert then
+                insertTextAtCursor(finalText, ctx.outputMode)
+                ctx.inserted = true
+            else
+                log("final: insertion disabled by action hooks")
+            end
+
+            ctx.text = finalText
+            runPostInsertActions(ctx)
+
+            setOverlayText(finalText)
             hs.sound.getByFile("/System/Library/Sounds/Glass.aiff"):play()
             hs.timer.doAfter(OVERLAY_LINGER, hideOverlay)
         end, { "-m", WHISPER_MODEL, "-f", finalWav, "-l", lang, "-nt", "--no-prints" })
@@ -490,6 +711,14 @@ hs.hotkey.bind({"ctrl", "alt"}, "O", function()
 end)
 
 --------------------------------------------------------------------------------
+-- Action reload hotkey
+--------------------------------------------------------------------------------
+
+hs.hotkey.bind({"ctrl", "alt"}, "R", function()
+    WhisperActions.reload()
+end)
+
+--------------------------------------------------------------------------------
 -- Emergency stop hotkey (Ctrl+Alt+X)
 --------------------------------------------------------------------------------
 
@@ -506,7 +735,9 @@ if type(hs.microphoneState) == "function" and not hs.microphoneState() then
 end
 
 log("loaded (trigger=" .. TRIGGER_KEY .. ", lang=" .. getLang() .. ", output=" .. getOutputMode() .. ", model=" .. MODEL_NAME .. ")")
+local actionsEnabled = loadActionConfig() ~= nil
+log("actions: " .. (actionsEnabled and "enabled" or "disabled"))
 hs.notify.new({
     title = "local-whisper",
-    informativeText = "Loaded (" .. getLang():upper() .. " / " .. getOutputMode():upper() .. " / " .. MODEL_NAME .. ") — hold " .. TRIGGER_KEY
+    informativeText = "Loaded (" .. getLang():upper() .. " / " .. getOutputMode():upper() .. " / " .. MODEL_NAME .. " / actions:" .. (actionsEnabled and "ON" or "OFF") .. ") — hold " .. TRIGGER_KEY
 }):send()

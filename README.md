@@ -104,7 +104,37 @@ Update the device index in `~/whisper-dictate/config.sh` if it's not `:0`.
 | Ctrl+Alt+A | Set language: Auto-detect |
 | Ctrl+Alt+T | Cycle languages |
 | Ctrl+Alt+O | Toggle output mode (paste / type) |
+| Ctrl+Alt+R | Reload action hook config (`~/.hammerspoon/local_whisper_actions.lua`) |
 | Ctrl+Alt+X | Emergency stop (kill recording + close overlay) |
+
+## Custom post-dictation actions (Hammerspoon)
+
+You can hook custom logic after transcription so dictations can trigger automations, route to files, open apps, or call a local LLM command.
+
+1. Copy the example file:
+
+```bash
+cp hammerspoon/local_whisper_actions.example.lua ~/.hammerspoon/local_whisper_actions.lua
+```
+
+2. Edit `~/.hammerspoon/local_whisper_actions.lua` and customize your rules.
+3. Reload with `Ctrl+Alt+R` (or reload Hammerspoon config).
+
+The hook context (`ctx`) includes:
+
+- `ctx.text` and `ctx.originalText`
+- `ctx.lang`, `ctx.outputMode`
+- `ctx:appendToFile(path, line)` for routing text to notes/tasks files
+- `ctx:launchApp("Safari")` for app automation
+- `ctx:runShell("your local command", optionalInputText)` to pipe dictated text into a local command
+- `ctx:setText(...)`, `ctx:disableInsert()`, `ctx:enableInsert()`
+
+Example voice commands you can wire in your hook file:
+
+- `note: buy coffee` -> append to notes file, skip cursor insertion
+- `journal: today was productive` -> append to journal file
+- `open Safari` -> launch/focus an app
+- `rewrite: ...` -> rewrite text via a local LLM CLI, then insert rewritten text
 
 ## How it works
 
