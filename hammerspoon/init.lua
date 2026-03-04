@@ -418,30 +418,46 @@ local genericMod = GENERIC_MOD[TRIGGER_KEY]
 
 local releasePoller = nil
 
-local modTap = hs.eventtap.new({ hs.eventtap.event.types.flagsChanged }, function(event)
-    local rawFlags = event:rawFlags()
-    local triggered = (rawFlags & triggerMask) > 0
+-- Global so we can inspect state via hs -c
+_whisper = { modTap = nil, recording = false }
 
-    if triggered and not isRecording then
-        startRecording()
-        -- Poll for release since flagsChanged doesn't fire on key-up
-        if releasePoller then releasePoller:stop() end
-        releasePoller = hs.timer.doEvery(0.1, function()
-            local mods = hs.eventtap.checkKeyboardModifiers()
-            if not mods[genericMod] then
-                releasePoller:stop()
-                releasePoller = nil
-                stopRecording()
-            end
-        end)
-    elseif not triggered and isRecording then
-        if releasePoller then releasePoller:stop(); releasePoller = nil end
-        stopRecording()
-    end
+local modTap = hs.eventtap.new({ hs.eventtap.event.types.flagsChanged }, function(event)
+    -- Wrap in pcall so errors don't kill the eventtap
+    local ok, err = pcall(function()
+        local rawFlags = event:rawFlags()
+        local triggered = (rawFlags & triggerMask) > 0
+
+        if triggered and not isRecording then
+            startRecording()
+            -- Poll for release since flagsChanged doesn't fire on key-up
+            if releasePoller then releasePoller:stop() end
+            releasePoller = hs.timer.doEvery(0.1, function()
+                local mods = hs.eventtap.checkKeyboardModifiers()
+                if not mods[genericMod] then
+                    releasePoller:stop()
+                    releasePoller = nil
+                    stopRecording()
+                end
+            end)
+        elseif not triggered and isRecording then
+            if releasePoller then releasePoller:stop(); releasePoller = nil end
+            stopRecording()
+        end
+    end)
+    if not ok then log("eventtap error: " .. tostring(err)) end
 
     return false
 end)
 modTap:start()
+_whisper.modTap = modTap
+
+-- Re-enable eventtap if it gets disabled (e.g. by secure input)
+hs.timer.doEvery(5, function()
+    if not modTap:isEnabled() then
+        log("eventtap was disabled, re-enabling")
+        modTap:start()
+    end
+end)
 
 --------------------------------------------------------------------------------
 -- Language hotkeys
