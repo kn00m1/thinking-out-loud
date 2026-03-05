@@ -739,15 +739,41 @@ local lastCheckedChunk = 0
 -- Menu bar status icon
 --------------------------------------------------------------------------------
 
+local function makeWaveformIcon(color, asTemplate)
+    local w, h = 18, 18
+    local c = hs.canvas.new({ x = 0, y = 0, w = w, h = h })
+    -- Bar heights (symmetric waveform: short-medium-tall-medium-short)
+    local bars = { 0.3, 0.55, 1.0, 0.55, 0.3 }
+    local barW = 2
+    local gap = 1.5
+    local totalW = #bars * barW + (#bars - 1) * gap
+    local startX = (w - totalW) / 2
+    for i, scale in ipairs(bars) do
+        local barH = math.floor(h * 0.75 * scale)
+        local x = startX + (i - 1) * (barW + gap)
+        local y = (h - barH) / 2
+        c:appendElements({
+            type = "rectangle",
+            frame = { x = x, y = y, w = barW, h = barH },
+            fillColor = color,
+            roundedRectRadii = { xRadius = 1, yRadius = 1 },
+            action = "fill",
+        })
+    end
+    local img = c:imageFromCanvas()
+    c:delete()
+    img:template(asTemplate)
+    return img
+end
+
 function updateMenuBar()
     if not menuBar then return end
     if isRecording then
-        menuBar:setTitle(hs.styledtext.new("●", {
-            color = { red = 1, green = 0.2, blue = 0.2 },
-            font = { size = 14 },
-        }))
+        local icon = makeWaveformIcon({ red = 1, green = 0.15, blue = 0.15, alpha = 1 }, false)
+        menuBar:setIcon(icon, false)
     else
-        menuBar:setTitle(hs.styledtext.new("🎙", { font = { size = 13 } }))
+        local icon = makeWaveformIcon({ red = 0, green = 0, blue = 0, alpha = 1 }, true)
+        menuBar:setIcon(icon, true)
     end
 end
 
