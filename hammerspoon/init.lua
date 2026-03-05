@@ -581,10 +581,12 @@ local btnColor = { red = 0.5, green = 0.8, blue = 1.0, alpha = 1.0 }
 local btnHover = { red = 0.7, green = 0.9, blue = 1.0, alpha = 1.0 }
 
 -- Element indices: 1=bg, 2=lang, 3=sep1, 4=output, 5=sep2, 6=enter, 7=sep3, 8=model, 9=close, 10=text, 11=dot, 12=timer
-local EL = { lang = 2, output = 4, enter = 6, model = 8, text = 9, dot = 10, timer = 11, close = 12 }
+local EL = { lang = 2, output = 4, enter = 6, model = 8, refine = 10, text = 11, dot = 12, timer = 13, close = 14 }
 
 local enterOnColor = { red = 0.3, green = 1.0, blue = 0.3, alpha = 1.0 }
 local enterOffColor = { red = 0.5, green = 0.5, blue = 0.5, alpha = 0.5 }
+local refineOnColor = { red = 0.4, green = 0.8, blue = 1.0, alpha = 1.0 }
+local refineOffColor = { red = 0.5, green = 0.5, blue = 0.5, alpha = 0.5 }
 
 local function refreshOverlayLabels()
     if not overlay then return end
@@ -593,6 +595,8 @@ local function refreshOverlayLabels()
     overlay[EL.enter].text = "⏎"
     overlay[EL.enter].textColor = getEnterMode() and enterOnColor or enterOffColor
     overlay[EL.model].text = getModelName()
+    overlay[EL.refine].text = "LLM"
+    overlay[EL.refine].textColor = (getRefineMode() and hasOllama()) and refineOnColor or refineOffColor
 end
 
 local function createOverlay()
@@ -660,10 +664,24 @@ local function createOverlay()
     overlay:appendElements({
         id = "model", type = "text", text = getModelName(),
         textColor = btnColor, textSize = 11,
-        frame = { x = "36%", y = "6%", w = "50%", h = "25%" },
+        frame = { x = "36%", y = "6%", w = "20%", h = "25%" },
         trackMouseUp = true, trackMouseEnterExit = true,
     })
-    -- 9: Transcript text
+    -- 9: Separator
+    overlay:appendElements({
+        id = "sep4", type = "text", text = "|",
+        textColor = sepColor, textSize = 11,
+        frame = { x = "54%", y = "6%", w = "2%", h = "25%" },
+    })
+    -- 10: LLM refine toggle
+    overlay:appendElements({
+        id = "refine", type = "text", text = "LLM",
+        textColor = (getRefineMode() and hasOllama()) and refineOnColor or refineOffColor,
+        textSize = 11,
+        frame = { x = "57%", y = "6%", w = "12%", h = "25%" },
+        trackMouseUp = true, trackMouseEnterExit = true,
+    })
+    -- 11: Transcript text
     overlay:appendElements({
         id = "text", type = "text", text = "Listening...",
         textColor = { red = 1, green = 1, blue = 1, alpha = 1.0 },
@@ -697,7 +715,7 @@ local function createOverlay()
     overlay:behavior(hs.canvas.windowBehaviors.canJoinAllSpaces)
 
     -- Map string IDs to numeric indices for element access
-    local idMap = { bg = 1, lang = EL.lang, output = EL.output, enter = EL.enter, model = EL.model, close = EL.close }
+    local idMap = { bg = 1, lang = EL.lang, output = EL.output, enter = EL.enter, model = EL.model, refine = EL.refine, close = EL.close }
 
     -- Mouse handler: click bg to pin, click labels to cycle settings, X to close
     overlay:canvasMouseEvents(true, true, true, false)  -- mouseDown + mouseUp + enterExit
@@ -728,6 +746,7 @@ local function createOverlay()
             elseif id == "output" then cycleOutput()
             elseif id == "enter" then cycleEnter()
             elseif id == "model" then cycleModel()
+            elseif id == "refine" then cycleRefine()
             end
             refreshOverlayLabels()
 
@@ -738,6 +757,8 @@ local function createOverlay()
                 canvas[idx].textColor = { red = 1, green = 0.3, blue = 0.3, alpha = 1 }
             elseif id == "enter" then
                 canvas[idx].textColor = enterOnColor
+            elseif id == "refine" then
+                canvas[idx].textColor = refineOnColor
             else
                 canvas[idx].textColor = btnHover
             end
@@ -749,6 +770,8 @@ local function createOverlay()
                 canvas[idx].textColor = { red = 1, green = 1, blue = 1, alpha = 0.5 }
             elseif id == "enter" then
                 canvas[idx].textColor = getEnterMode() and enterOnColor or enterOffColor
+            elseif id == "refine" then
+                canvas[idx].textColor = (getRefineMode() and hasOllama()) and refineOnColor or refineOffColor
             else
                 canvas[idx].textColor = btnColor
             end
