@@ -76,6 +76,33 @@ local ACTIONS_FILE = HOME .. "/.hammerspoon/local_whisper_actions.lua"
 local AUTO_STOP_SILENCE_SECONDS = 3
 local AUTO_STOP_THRESHOLD_DB = -40
 
+-- LLM refinement (requires Ollama)
+local REFINE_FILE = CONFIG_DIR .. "/refine"
+local REFINE_MODEL = "llama3.2"
+local REFINE_MIN_CHARS = 50  -- skip refinement for short text
+local REFINE_PROMPT = "Clean up this dictated speech for insertion as text. Fix punctuation and capitalization. Remove filler words. If it contains a numbered list (one/two/three or 1/2/3), format as a numbered list with newlines. Do NOT add any commentary or explanation. Output ONLY the cleaned text."
+
+local function hasOllama()
+    return os.execute("command -v ollama >/dev/null 2>&1")
+end
+
+local function getRefineMode()
+    local f = io.open(REFINE_FILE, "r")
+    if not f then return false end
+    local val = f:read("*a"):gsub("%s+", ""); f:close()
+    return val == "on"
+end
+
+local function setRefineMode(on)
+    local f = io.open(REFINE_FILE, "w")
+    if f then f:write(on and "on" or "off"); f:close() end
+end
+
+local function cycleRefine()
+    local current = getRefineMode()
+    setRefineMode(not current)
+end
+
 -- Timing
 local PARTIAL_INTERVAL = 2.0   -- seconds between partial transcriptions
 local OVERLAY_LINGER = 0.5     -- seconds to show final text before closing
@@ -218,6 +245,38 @@ local function postProcess(text, appBundleID)
         text = text:gsub("^%l", string.upper)
     end
     return text
+end
+
+local function refineWithOllama(text, callback)
+    if not getRefineMode() or not hasOllama() or #text < REFINE_MIN_CHARS then
+        callback(text)
+        return
+    end
+    log("refine: sending to Ollama (" .. #text .. " chars)")
+    local input = REFINE_PROMPT .. "\n\n" .. text
+    local ollamaPath = "/usr/local/bin/ollama"
+    if not hs.fs.attributes(ollamaPath) then
+        ollamaPath = "/opt/homebrew/bin/ollama"
+    end
+    if not hs.fs.attributes(ollamaPath) then
+        -- fallback: try PATH
+        ollamaPath = "ollama"
+    end
+    local tmpIn = WHISPER_TMP .. "/refine_input.txt"
+    local f = io.open(tmpIn, "w")
+    if f then f:write(input); f:close() end
+    local task = hs.task.new("/bin/sh", function(code, stdout, stderr)
+        if code == 0 and stdout and stdout:gsub("%s+", "") ~= "" then
+            local refined = stdout:gsub("^%s+", ""):gsub("%s+$", "")
+            log("refine: success (" .. #refined .. " chars)")
+            callback(refined)
+        else
+            log("refine: failed (code=" .. tostring(code) .. "), using original")
+            callback(text)
+        end
+    end, { "-c", ollamaPath .. " run " .. REFINE_MODEL .. " < " .. shellQuote(tmpIn) })
+    task:setEnvironment({ PATH = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin" })
+    task:start()
 end
 
 local function isHallucination(text)
@@ -841,6 +900,20 @@ local function buildMenuBarMenu()
         fn = function() cycleEnter(); updateMenuBar() end,
     })
 
+    -- LLM refinement
+    if hasOllama() then
+        local refineState = getRefineMode() and "ON" or "OFF"
+        table.insert(items, {
+            title = "LLM Refine: " .. refineState .. " (" .. REFINE_MODEL .. ")",
+            fn = function() cycleRefine(); updateMenuBar() end,
+        })
+    else
+        table.insert(items, {
+            title = "LLM Refine (install ollama.com)",
+            disabled = true,
+        })
+    end
+
     -- Preferred langs
     local preferred = table.concat(getPreferredLangs(), ", ")
     table.insert(items, { title = "Preferred: " .. preferred, disabled = true })
@@ -1054,17 +1127,8 @@ local function insertTextAtCursor(text, mode)
     end
 end
 
--- Insert transcribed text at cursor, with action hooks and app-aware processing
-local function insertTranscribedText(text, detectedLang)
-    if text == "" or isHallucination(text) then
-        hideOverlay()
-        return
-    end
-
-    -- Apply app-aware post-processing
-    text = postProcess(text, capturedAppBundleID)
-    if text == "" then hideOverlay(); return end
-
+-- Finish insertion after all processing (post-process, refine, hooks)
+local function finishInsertion(text, detectedLang)
     -- Build action context and run pre-insert hooks
     local ctx = buildActionContext(normalizeText(text), detectedLang or getLang(), getOutputMode())
     runPreInsertActions(ctx)
@@ -1112,6 +1176,28 @@ local function insertTranscribedText(text, detectedLang)
     setOverlayText(display)
     hs.sound.getByFile("/System/Library/Sounds/Glass.aiff"):play()
     hs.timer.doAfter(OVERLAY_LINGER, hideOverlay)
+end
+
+-- Insert transcribed text at cursor, with post-processing, optional LLM refinement, and action hooks
+local function insertTranscribedText(text, detectedLang)
+    if text == "" or isHallucination(text) then
+        hideOverlay()
+        return
+    end
+
+    -- Apply app-aware post-processing
+    text = postProcess(text, capturedAppBundleID)
+    if text == "" then hideOverlay(); return end
+
+    -- Optional LLM refinement (async, skips short text)
+    if getRefineMode() and #text >= REFINE_MIN_CHARS then
+        setOverlayText("Refining...")
+        refineWithOllama(text, function(refined)
+            finishInsertion(refined, detectedLang)
+        end)
+    else
+        finishInsertion(text, detectedLang)
+    end
 end
 
 local function doFinalTranscription()
@@ -1267,6 +1353,9 @@ local function startRecording()
     log("recording: app=" .. tostring(capturedAppName) .. " (" .. tostring(capturedAppBundleID) .. ")")
 
     showOverlay()
+    if getRefineMode() and hasOllama() then
+        setOverlayText("Listening... (LLM refine ON)")
+    end
     startRecordingIndicator()
     updateMenuBar()
     hs.sound.getByFile("/System/Library/Sounds/Pop.aiff"):play()
