@@ -13,7 +13,7 @@ cp hammerspoon/local_whisper_actions.example.lua ~/.hammerspoon/local_whisper_ac
 ```
 
 2. Edit `~/.hammerspoon/local_whisper_actions.lua` with your rules
-3. The config auto-reloads when you save (or press Ctrl+Alt+R)
+3. The config auto-reloads when you save (or use menu bar > Reload Actions)
 
 ## How it works
 
@@ -316,7 +316,7 @@ Actions run in order and stop early if any action sets `ctx.handled = true`.
 
 3. **Test incrementally**: add one command at a time, dictate it, check the log. Lua syntax errors in the config will be logged and the file will be skipped (graceful failure).
 
-4. **Reload after edits**: the config auto-reloads on file save (checks mtime). You can also press Ctrl+Alt+R or use the menu bar > Reload Actions.
+4. **Reload after edits**: the config auto-reloads on file save (checks mtime). You can also use the menu bar > Reload Actions.
 
 5. **Test pattern matching in Hammerspoon console**:
    ```lua

@@ -135,7 +135,7 @@ bd automatically syncs with git:
 - Do NOT use external issue trackers
 - Do NOT duplicate tracking systems
 
-For more details, see README.md and docs/QUICKSTART.md.
+For more details, see README.md and docs/VOICE_COMMANDS.md.
 
 <!-- END BEADS INTEGRATION -->
 

@@ -17,8 +17,8 @@ local CHUNK_DIR = WHISPER_TMP .. "/chunks"
 local CONFIG_DIR = HOME .. "/.local-whisper"
 os.execute("mkdir -p '" .. CONFIG_DIR .. "'")
 
--- External binaries (absolute paths)
-local FFMPEG = "/opt/homebrew/bin/ffmpeg"
+-- External binaries (absolute paths, with ARM/Intel fallback)
+local FFMPEG = hs.fs.attributes("/opt/homebrew/bin/ffmpeg") and "/opt/homebrew/bin/ffmpeg" or "/usr/local/bin/ffmpeg"
 local WHISPER_BIN = HOME .. "/whisper.cpp/build/bin/whisper-cli"
 local MODELS_DIR = HOME .. "/whisper.cpp/models"
 local MODEL_FILE = CONFIG_DIR .. "/model"
@@ -82,7 +82,7 @@ local REFINE_PROMPT_FILE = CONFIG_DIR .. "/refine_prompt"
 local REFINE_MODEL_FILE = CONFIG_DIR .. "/refine_model"
 local REFINE_DEFAULT_MODEL = "gemma3:4b"
 local REFINE_MIN_CHARS = 50  -- skip refinement for short text
-local REFINE_DEFAULT_PROMPT = "You are a text cleanup tool. Your ONLY job is to output the cleaned version of the input text. Rules: fix punctuation and capitalization, remove filler words (um, uh, like, you know, so, well, I mean), format numbered lists with newlines. NEVER start with phrases like 'Here is', 'Here's', 'The cleaned text', 'Sure', etc. Just output the text directly. Nothing before it, nothing after it."
+local REFINE_DEFAULT_PROMPT = "You are a text cleanup tool. Output ONLY the cleaned text, nothing else. Rules: (1) Fix punctuation and capitalization. (2) Remove ONLY filler words: um, uh, like, you know, so, well, I mean. Do NOT remove sentences or meaningful content. (3) If the text contains a numbered list, put each item on its own line. NEVER add commentary, preamble, or explanations. NEVER start with 'Here is' or similar. Output the cleaned text directly."
 
 local function getRefineModel()
     local f = io.open(REFINE_MODEL_FILE, "r")
@@ -609,7 +609,7 @@ local overlay = nil
 local btnColor = { red = 0.5, green = 0.8, blue = 1.0, alpha = 1.0 }
 local btnHover = { red = 0.7, green = 0.9, blue = 1.0, alpha = 1.0 }
 
--- Element indices: 1=bg, 2=lang, 3=sep1, 4=output, 5=sep2, 6=enter, 7=sep3, 8=model, 9=close, 10=text, 11=dot, 12=timer
+-- Element indices: 1=bg, 2=lang, 3=sep1, 4=output, 5=sep2, 6=enter, 7=sep3, 8=model, 9=sep4, 10=refine, 11=text, 12=dot, 13=timer, 14=close
 local EL = { lang = 2, output = 4, enter = 6, model = 8, refine = 10, text = 11, dot = 12, timer = 13, close = 14 }
 
 local enterOnColor = { red = 0.3, green = 1.0, blue = 0.3, alpha = 1.0 }
@@ -719,13 +719,13 @@ local function createOverlay()
         textSize = 14,
         frame = { x = "5%", y = "35%", w = "90%", h = "60%" },
     })
-    -- 10: Recording indicator (pulsing red dot)
+    -- 12: Recording indicator (pulsing red dot)
     overlay:appendElements({
         id = "dot", type = "oval", action = "fill",
         fillColor = { red = 1, green = 0.15, blue = 0.15, alpha = 0.0 },
         frame = { x = "89%", y = "8%", w = "3%", h = "12%" },
     })
-    -- 11: Elapsed time display
+    -- 13: Elapsed time display
     overlay:appendElements({
         id = "timer", type = "text", text = "",
         textColor = { red = 1, green = 0.4, blue = 0.4, alpha = 0.0 },
@@ -733,7 +733,7 @@ local function createOverlay()
         frame = { x = "75%", y = "8%", w = "14%", h = "20%" },
         textAlignment = "right",
     })
-    -- 12: Close button (X) — last element so it's on top and clickable
+    -- 14: Close button (X) — last element so it's on top and clickable
     overlay:appendElements({
         id = "close", type = "text", text = "✕",
         textColor = { red = 1, green = 0.4, blue = 0.4, alpha = 0.8 },
