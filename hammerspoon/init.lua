@@ -79,9 +79,19 @@ local AUTO_STOP_THRESHOLD_DB = -40
 -- LLM refinement (requires Ollama)
 local REFINE_FILE = CONFIG_DIR .. "/refine"
 local REFINE_PROMPT_FILE = CONFIG_DIR .. "/refine_prompt"
-local REFINE_MODEL = "llama3.2"
+local REFINE_MODEL_FILE = CONFIG_DIR .. "/refine_model"
+local REFINE_DEFAULT_MODEL = "llama3.1:8b"
 local REFINE_MIN_CHARS = 50  -- skip refinement for short text
 local REFINE_DEFAULT_PROMPT = "Clean up this dictated speech for insertion as text. Fix punctuation and capitalization. Remove filler words. If it contains a numbered list (one/two/three or 1/2/3), format as a numbered list with newlines. Do NOT add any commentary or explanation. Output ONLY the cleaned text."
+
+local function getRefineModel()
+    local f = io.open(REFINE_MODEL_FILE, "r")
+    if f then
+        local val = f:read("*a"):gsub("%s+", ""); f:close()
+        if val ~= "" then return val end
+    end
+    return REFINE_DEFAULT_MODEL
+end
 
 local function getRefinePrompt()
     local f = io.open(REFINE_PROMPT_FILE, "r")
@@ -282,10 +292,10 @@ local function refineWithOllama(text, callback)
             log("refine: success (" .. #refined .. " chars)")
             callback(refined)
         else
-            log("refine: failed (code=" .. tostring(code) .. "), using original")
+            log("refine: failed (code=" .. tostring(code) .. ", stderr=" .. tostring(stderr) .. "), using original")
             callback(text)
         end
-    end, { "-c", ollamaPath .. " run " .. REFINE_MODEL .. " < " .. shellQuote(tmpIn) })
+    end, { "-c", ollamaPath .. " run " .. getRefineModel() .. " < " .. shellQuote(tmpIn) })
     task:setEnvironment({ PATH = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin" })
     task:start()
 end
@@ -940,7 +950,7 @@ local function buildMenuBarMenu()
     if hasOllama() then
         local refineState = getRefineMode() and "ON" or "OFF"
         table.insert(items, {
-            title = "LLM Refine: " .. refineState .. " (" .. REFINE_MODEL .. ")",
+            title = "LLM Refine: " .. refineState .. " (" .. getRefineModel() .. ")",
             fn = function() cycleRefine(); updateMenuBar() end,
         })
     else
