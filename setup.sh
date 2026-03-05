@@ -85,8 +85,13 @@ read -r -p "  Device [${CURRENT_DEVICE}]: " NEW_DEVICE
 NEW_DEVICE="${NEW_DEVICE:-$CURRENT_DEVICE}"
 
 if [[ "$NEW_DEVICE" != "$CURRENT_DEVICE" ]]; then
-    # Escape for sed (the value is simple, just colons and digits)
-    sed -i '' "s/local AUDIO_DEVICE = \".*\"/local AUDIO_DEVICE = \"${NEW_DEVICE}\"/" "$INIT_LUA"
+    # Validate device format (colon + digits or :default)
+    if [[ ! "$NEW_DEVICE" =~ ^:[0-9]+$ ]] && [[ "$NEW_DEVICE" != ":default" ]]; then
+        warn "Unusual device format: $NEW_DEVICE (expected :0, :1, :default)"
+    fi
+    # Escape special chars for sed
+    ESCAPED_DEVICE=$(printf '%s\n' "$NEW_DEVICE" | sed 's/[&/\]/\\&/g')
+    sed -i '' "s/local AUDIO_DEVICE = \".*\"/local AUDIO_DEVICE = \"${ESCAPED_DEVICE}\"/" "$INIT_LUA"
     ok "Audio device set to: $NEW_DEVICE"
 else
     ok "Audio device: $NEW_DEVICE (unchanged)"

@@ -147,9 +147,17 @@ info "Step 4/5: Setting up Hammerspoon..."
 
 mkdir -p "$HAMMERSPOON_DIR"
 
+# Create config directory for user settings
+CONFIG_DIR="$HOME/.local-whisper"
+mkdir -p "$CONFIG_DIR"
+ok "Config directory: $CONFIG_DIR"
+
 if [[ -f "$HAMMERSPOON_DIR/init.lua" ]]; then
     if grep -q "local-whisper" "$HAMMERSPOON_DIR/init.lua"; then
-        ok "Hammerspoon already configured with local-whisper"
+        # Existing local-whisper config — update it but preserve user settings
+        # (user settings live in ~/.local-whisper/, not in init.lua)
+        cp "$SCRIPT_DIR/hammerspoon/init.lua" "$HAMMERSPOON_DIR/init.lua"
+        ok "Hammerspoon config updated"
     else
         warn "Existing init.lua found — backing up to init.lua.backup"
         cp "$HAMMERSPOON_DIR/init.lua" "$HAMMERSPOON_DIR/init.lua.backup"
@@ -161,12 +169,11 @@ else
     ok "Hammerspoon config installed"
 fi
 
-# Mention example actions file
+# Install example voice commands if user doesn't have a config yet
 if [[ ! -f "$HAMMERSPOON_DIR/local_whisper_actions.lua" ]]; then
     if [[ -f "$SCRIPT_DIR/hammerspoon/local_whisper_actions.example.lua" ]]; then
-        echo ""
-        info "Tip: to enable voice commands (note-taking, app launching, etc.):"
-        echo -e "  cp ${SCRIPT_DIR}/hammerspoon/local_whisper_actions.example.lua ${HAMMERSPOON_DIR}/local_whisper_actions.lua"
+        cp "$SCRIPT_DIR/hammerspoon/local_whisper_actions.example.lua" "$HAMMERSPOON_DIR/local_whisper_actions.lua"
+        ok "Voice commands config installed (edit ~/.hammerspoon/local_whisper_actions.lua to customize)"
     fi
 fi
 

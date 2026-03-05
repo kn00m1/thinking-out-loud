@@ -2,48 +2,47 @@
 
 ## Project overview
 
-local-whisper is a fully-local macOS dictation tool. Hold Right Option to record, release to transcribe and insert text at cursor. Powered by whisper.cpp (C/C++, no Python), Karabiner-Elements, and Hammerspoon.
+local-whisper is a fully-local macOS dictation tool. Hold a modifier key to record, release to transcribe and insert text at cursor. Powered by whisper.cpp (C/C++, no Python) and Hammerspoon.
 
 ## Architecture
 
 ```
-Karabiner (Right Option hold/release)
-  → start_record.sh / stop_transcribe.sh (bash)
-    → ffmpeg (chunked WAV recording)
-    → whisper-cli (transcription)
-    → hs -c "..." (signals Hammerspoon)
-      → Hammerspoon (overlay, text insertion, hotkeys)
+Hammerspoon eventtap (modifier key hold/release)
+  → ffmpeg (chunked WAV recording, 1s segments)
+  → whisper-cli (transcription — tiny model for partials, chosen model for final)
+  → Post-processing (filler removal, app-aware capitalize)
+  → Action hooks (voice commands, note-taking, app launching)
+  → Text insertion at cursor (paste or keystroke)
+  → Overlay + menu bar updates
 ```
+
+Everything runs inside `~/.hammerspoon/init.lua` — no external bash scripts at runtime.
 
 ## Key paths
 
-- `~/whisper-dictate/` — bash scripts (start, stop, config)
-- `~/.hammerspoon/init.lua` — overlay + insertion + hotkeys
+- `~/.hammerspoon/init.lua` — main config (overlay, recording, insertion, hotkeys, menu bar)
+- `~/.hammerspoon/local_whisper_actions.lua` — user voice commands (optional, auto-reloads)
+- `~/.local-whisper/` — all user settings (lang, model, output, prompt, recent dictations)
 - `~/whisper.cpp/build/bin/whisper-cli` — transcription binary
-- `~/whisper.cpp/models/ggml-medium.bin` — model
+- `~/whisper.cpp/models/` — whisper models (medium, tiny, etc.)
 - `$TMPDIR/whisper-dictate/` — all temp state (per-user private dir on macOS)
 - `$TMPDIR/whisper-dictate/chunks/` — recording segments (ephemeral)
-- `$TMPDIR/whisper-dictate/partial.txt` — live partial transcript
-- `$TMPDIR/whisper-dictate/final.txt` — final transcript
-- `$TMPDIR/whisper-dictate/recording.pid` — ffmpeg PID lock
-- `~/.local-whisper/` — all user settings (lang, model, output, prompt, recent dictations)
+- `$TMPDIR/whisper-dictate/whisper-dictate.log` — debug log
 
 ## Conventions
 
-- Bash scripts: use `set -euo pipefail`, source `config.sh` for shared vars
-- All paths in scripts should be absolute (Karabiner runs in minimal env)
-- Log to `$TMPDIR/whisper-dictate/whisper-dictate.log` for debugging
-- Hammerspoon API: use `hs.canvas` for overlay, `hs.eventtap` for typing, `hs.pasteboard` for paste mode
-- Signal between bash and Hammerspoon via `hs -c "FunctionName()"`
+- Single-file architecture: all runtime logic in init.lua
+- Hammerspoon API: `hs.canvas` for overlay, `hs.eventtap` for key detection and typing, `hs.pasteboard` for paste mode, `hs.task` for async processes, `hs.menubar` for status icon
 - whisper.cpp binary is `whisper-cli`, NOT `main`
-- No Python anywhere — this is a pure C/shell/Lua stack
+- No Python anywhere — this is a pure C/Lua stack
+- Log to `$TMPDIR/whisper-dictate/whisper-dictate.log` for debugging
 
 ## Security
 
-- Scripts must never execute untrusted input — transcribed text is data, not code
-- PID files and temp files in `/tmp/` must use safe creation patterns (no symlink attacks)
+- Transcribed text is data, not code — never execute it
 - No network calls — everything stays local
-- Clipboard contents are overwritten during paste mode — warn users in docs
+- Clipboard contents are overwritten during paste mode
+- Temp files in $TMPDIR are per-user private on macOS
 
 ## Workflow
 

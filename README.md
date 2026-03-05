@@ -33,7 +33,7 @@ cd local-whisper
 ./install.sh
 ```
 
-The installer handles everything: Homebrew dependencies, building whisper.cpp, downloading the model, detecting your microphone, setting up Hammerspoon, granting permissions, and choosing your trigger key.
+The installer handles everything: Homebrew dependencies, building whisper.cpp, downloading models, and setting up Hammerspoon. It then runs `setup.sh` which walks you through choosing your trigger key, microphone, and granting permissions.
 
 To change the trigger key or re-run setup later:
 
@@ -67,6 +67,14 @@ cp hammerspoon/init.lua ~/.hammerspoon/init.lua
 ```
 
 </details>
+
+## Uninstall
+
+```bash
+./uninstall.sh
+```
+
+Removes Hammerspoon config, `~/.local-whisper/` settings, and temp files. Optionally removes `~/whisper.cpp`. Does not uninstall Homebrew packages.
 
 ## Setup
 
