@@ -197,6 +197,8 @@ cp hammerspoon/local_whisper_actions.example.lua ~/.hammerspoon/local_whisper_ac
 
 Patterns in `actions[].pattern` match against `ctx.textLower` (case-insensitive), so "Note: Buy coffee" matches `^note:`.
 
+For a full guide on designing trigger phrases, writing custom commands, and testing — see **[docs/VOICE_COMMANDS.md](docs/VOICE_COMMANDS.md)**.
+
 ## How it works
 
 ```
