@@ -78,9 +78,20 @@ local AUTO_STOP_THRESHOLD_DB = -40
 
 -- LLM refinement (requires Ollama)
 local REFINE_FILE = CONFIG_DIR .. "/refine"
+local REFINE_PROMPT_FILE = CONFIG_DIR .. "/refine_prompt"
 local REFINE_MODEL = "llama3.2"
 local REFINE_MIN_CHARS = 50  -- skip refinement for short text
-local REFINE_PROMPT = "Clean up this dictated speech for insertion as text. Fix punctuation and capitalization. Remove filler words. If it contains a numbered list (one/two/three or 1/2/3), format as a numbered list with newlines. Do NOT add any commentary or explanation. Output ONLY the cleaned text."
+local REFINE_DEFAULT_PROMPT = "Clean up this dictated speech for insertion as text. Fix punctuation and capitalization. Remove filler words. If it contains a numbered list (one/two/three or 1/2/3), format as a numbered list with newlines. Do NOT add any commentary or explanation. Output ONLY the cleaned text."
+
+local function getRefinePrompt()
+    local f = io.open(REFINE_PROMPT_FILE, "r")
+    if f then
+        local content = f:read("*a"); f:close()
+        content = content:gsub("^%s+", ""):gsub("%s+$", "")
+        if content ~= "" then return content end
+    end
+    return REFINE_DEFAULT_PROMPT
+end
 
 local function hasOllama()
     return os.execute("command -v ollama >/dev/null 2>&1")
@@ -253,7 +264,7 @@ local function refineWithOllama(text, callback)
         return
     end
     log("refine: sending to Ollama (" .. #text .. " chars)")
-    local input = REFINE_PROMPT .. "\n\n" .. text
+    local input = getRefinePrompt() .. "\n\n" .. text
     local ollamaPath = "/usr/local/bin/ollama"
     if not hs.fs.attributes(ollamaPath) then
         ollamaPath = "/opt/homebrew/bin/ollama"
