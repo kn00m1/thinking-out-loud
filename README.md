@@ -114,13 +114,13 @@ This installs the `hs` command-line tool used for IPC.
 
 ### Audio device
 
-Find your microphone device index:
+The default `:default` uses your system input device — this is recommended as it survives dock/undock and audio device changes. To use a specific device, find its index:
 
 ```bash
 ffmpeg -f avfoundation -list_devices true -i ""
 ```
 
-Update `AUDIO_DEVICE` in `~/.hammerspoon/init.lua` if it's not `:1`.
+Then update `AUDIO_DEVICE` in `~/.hammerspoon/init.lua` (e.g., `:0`, `:1`).
 
 ## Menu bar
 

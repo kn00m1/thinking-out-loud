@@ -80,7 +80,8 @@ fi
 CURRENT_DEVICE=$(grep -m1 'local AUDIO_DEVICE' "$INIT_LUA" | sed 's/.*"\(.*\)".*/\1/')
 echo -e "  Current: ${BOLD}${CURRENT_DEVICE}${NC}"
 echo ""
-echo "  Enter a device string (e.g. :0, :1, :default) or press Enter to keep current:"
+echo "  :default uses your system input device (recommended — survives dock/undock)"
+echo "  Enter a device string (e.g. :default, :0, :1) or press Enter to keep current:"
 read -r -p "  Device [${CURRENT_DEVICE}]: " NEW_DEVICE
 NEW_DEVICE="${NEW_DEVICE:-$CURRENT_DEVICE}"
 
