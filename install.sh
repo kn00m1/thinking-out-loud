@@ -54,7 +54,7 @@ ok "Homebrew found"
 
 # ─── Step 1: Brew dependencies ──────────────────────────────────────────────
 echo ""
-info "Step 1/5: Installing dependencies via Homebrew..."
+info "Step 1/6: Installing dependencies via Homebrew..."
 
 BREW_FORMULAE=(ffmpeg cmake git)
 for formula in "${BREW_FORMULAE[@]}"; do
@@ -77,7 +77,7 @@ fi
 
 # ─── Step 2: Build whisper.cpp ───────────────────────────────────────────────
 echo ""
-info "Step 2/5: Building whisper.cpp..."
+info "Step 2/6: Building whisper.cpp..."
 
 if [[ -x "$WHISPER_CPP_DIR/build/bin/whisper-cli" ]]; then
     ok "whisper-cli already built at $WHISPER_CPP_DIR/build/bin/whisper-cli"
@@ -105,7 +105,7 @@ fi
 
 # ─── Step 3: Download models ────────────────────────────────────────────────
 echo ""
-info "Step 3/5: Downloading whisper models..."
+info "Step 3/6: Downloading whisper models..."
 
 MODEL_FILE="$WHISPER_CPP_DIR/models/ggml-${WHISPER_MODEL}.bin"
 if [[ -f "$MODEL_FILE" ]]; then
@@ -143,7 +143,7 @@ fi
 
 # ─── Step 4: Install Hammerspoon config ─────────────────────────────────────
 echo ""
-info "Step 4/5: Setting up Hammerspoon..."
+info "Step 4/6: Setting up Hammerspoon..."
 
 mkdir -p "$HAMMERSPOON_DIR"
 
@@ -179,6 +179,41 @@ fi
 
 # ─── Step 5: Setup (permissions, trigger key, audio device, HS CLI) ─────────
 echo ""
-info "Step 5/5: Running setup (permissions, trigger key, audio device)..."
+info "Step 5/6: Running setup (permissions, trigger key, audio device)..."
 echo ""
 bash "$SCRIPT_DIR/setup.sh"
+
+# ─── Step 6: Optional — BlackHole for meeting recording ──────────────────────
+echo ""
+info "Step 6/6: Meeting recording mode (optional)"
+echo ""
+echo "  Meeting mode captures system audio during calls and generates"
+echo "  transcripts + AI summaries. Requires BlackHole (free virtual audio driver)."
+echo ""
+read -r -p "  Install BlackHole for meeting recording? [y/N]: " INSTALL_BH
+
+if [[ "$INSTALL_BH" =~ ^[Yy]$ ]]; then
+    if brew list --cask blackhole-2ch &>/dev/null; then
+        ok "BlackHole 2ch already installed"
+    else
+        info "Installing BlackHole 2ch..."
+        brew install --cask blackhole-2ch
+        ok "BlackHole 2ch installed"
+    fi
+
+    echo ""
+    echo -e "  ${BOLD}One manual step needed:${NC} create a Multi-Output Device"
+    echo ""
+    echo "  1. Audio MIDI Setup will open (or find it via Spotlight)"
+    echo "  2. Click '+' at bottom left → Create Multi-Output Device"
+    echo "  3. Check BOTH your speakers/headphones AND BlackHole 2ch"
+    echo "  4. Right-click the new device → Use This Device For Sound Output"
+    echo ""
+    echo "  This routes audio to both your ears and BlackHole for recording."
+    echo ""
+    open "/Applications/Utilities/Audio MIDI Setup.app" 2>/dev/null || true
+    read -r -p "  Press Enter when done..."
+    ok "Meeting mode ready — start from the menu bar icon"
+else
+    ok "Skipped (you can set up meeting mode later from the menu bar)"
+fi
