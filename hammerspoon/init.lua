@@ -931,6 +931,14 @@ local function openDashboard()
     dashboard:windowTitle("Dictation History")
     dashboard:allowTextEntry(true)
     dashboard:level(hs.canvas.windowLevels.normal)
+    -- Clear our stale reference when the user closes the window with the red X
+    -- (otherwise openDashboard thinks it's still open and refuses to reopen).
+    dashboard:windowCallback(function(action, webview, state)
+        if action == "closing" then
+            dashboard = nil
+        end
+    end)
+    dashboard:deleteOnClose(true)
     dashboard:html(DASHBOARD_HTML)
     dashboard:show()
     dashboard:bringToFront(true)
@@ -1102,18 +1110,6 @@ local function buildMenuBarMenu()
             fn = function() startMeeting() end,
         })
     end
-
-    table.insert(items, { title = "-" })
-
-    -- Settings overlay
-    table.insert(items, {
-        title = "Settings...",
-        fn = function()
-            -- Settings chrome lives in the menu bar now; this is a no-op placeholder.
-            -- Kept for menu parity with upstream.
-            hs.notify.new({ title = "local-whisper", informativeText = "Settings available in this menu." }):send()
-        end,
-    })
 
     -- History dashboard (replaces the old inline "Recent Dictations" list)
     table.insert(items, { title = "-" })
