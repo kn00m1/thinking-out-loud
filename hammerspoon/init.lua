@@ -1,4 +1,4 @@
--- init.lua — local-whisper: Hammerspoon-only dictation
+-- init.lua — Thinking Out Loud (fork of local-whisper): Hammerspoon-only dictation
 -- Hold a modifier key → record → transcribe → insert at cursor
 -- No Karabiner needed. Just Hammerspoon + ffmpeg + whisper.cpp
 
@@ -14,7 +14,7 @@ local WHISPER_TMP = TMPDIR .. "/whisper-dictate"
 local CHUNK_DIR = WHISPER_TMP .. "/chunks"
 
 -- Config directory (all user settings live here)
-local CONFIG_DIR = HOME .. "/.local-whisper"
+local CONFIG_DIR = HOME .. "/.thinking-out-loud"
 os.execute("mkdir -p '" .. CONFIG_DIR .. "'")
 
 -- External binaries (absolute paths, with ARM/Intel fallback)
@@ -56,7 +56,7 @@ end
 
 -- Audio device: ":default" for system default, ":0", ":1" etc. for specific
 -- Note: avfoundation requires colon prefix for audio-only (":0" not "0")
--- Primary source of truth is ~/.local-whisper/audio_device (set via menu bar);
+-- Primary source of truth is ~/.thinking-out-loud/audio_device (set via menu bar);
 -- this literal is the install-time default used on first run.
 local AUDIO_DEVICE = ":default"
 
@@ -172,7 +172,7 @@ local TRIGGER_MASKS = {
 
 local triggerMask = TRIGGER_MASKS[TRIGGER_KEY]
 if not triggerMask then
-    hs.notify.new({ title = "local-whisper", informativeText = "ERROR: Invalid TRIGGER_KEY: " .. TRIGGER_KEY }):send()
+    hs.notify.new({ title = "Thinking Out Loud", informativeText = "ERROR: Invalid TRIGGER_KEY: " .. TRIGGER_KEY }):send()
     return
 end
 
@@ -582,7 +582,7 @@ local function buildActionContext(text, lang, mode)
     end
 
     function ctx:notify(message)
-        hs.notify.new({ title = "local-whisper", informativeText = tostring(message) }):send()
+        hs.notify.new({ title = "Thinking Out Loud", informativeText = tostring(message) }):send()
     end
 
     function ctx:log(message)
@@ -643,9 +643,9 @@ WhisperActions = WhisperActions or {}
 function WhisperActions.reload()
     local cfg = reloadActionConfig()
     if cfg then
-        hs.notify.new({ title = "local-whisper", informativeText = "Action hooks reloaded" }):send()
+        hs.notify.new({ title = "Thinking Out Loud", informativeText = "Action hooks reloaded" }):send()
     else
-        hs.notify.new({ title = "local-whisper", informativeText = "No action hook config found" }):send()
+        hs.notify.new({ title = "Thinking Out Loud", informativeText = "No action hook config found" }):send()
     end
 end
 
@@ -795,7 +795,7 @@ local pulseFading = true
 -- Undo state
 local lastInsertedText = nil
 
--- Dictation history (newest first, persisted to ~/.local-whisper/history.json).
+-- Dictation history (newest first, persisted to ~/.thinking-out-loud/history.json).
 -- Replaces the previous "recent.json" 10-entry cap. Entries: {text, time, inserted, app, model, chars}.
 local MAX_RECENT = 500
 local HISTORY_FILE = CONFIG_DIR .. "/history.json"
@@ -904,11 +904,11 @@ local function openDashboard()
             pushHistoryToDashboard()
 
         elseif action == "export" then
-            local path = os.getenv("HOME") .. "/Downloads/local-whisper-history-"
+            local path = os.getenv("HOME") .. "/Downloads/thinking-out-loud-history-"
                 .. os.date("%Y%m%d-%H%M%S") .. ".md"
             local f = io.open(path, "w")
             if not f then return end
-            f:write("# local-whisper dictation history\n\n")
+            f:write("# Thinking Out Loud — dictation history\n\n")
             f:write("Exported " .. os.date("%Y-%m-%d %H:%M:%S") .. " — " .. #recentDictations .. " entries\n\n")
             for _, e in ipairs(recentDictations) do
                 local ts = os.date("%Y-%m-%d %H:%M", e.time)
@@ -928,7 +928,7 @@ local function openDashboard()
     dashboard = hs.webview.new({ x = x, y = y, w = w, h = h },
         { developerExtrasEnabled = true }, controller)
     dashboard:windowStyle({ "titled", "closable", "resizable", "miniaturizable" })
-    dashboard:windowTitle("Dictation History")
+    dashboard:windowTitle("Thinking Out Loud — History")
     dashboard:allowTextEntry(true)
     dashboard:level(hs.canvas.windowLevels.normal)
     -- Clear our stale reference when the user closes the window with the red X
@@ -1193,7 +1193,7 @@ function emergencyStop()
     forceHideOverlay()
     updateMenuBar()
     os.execute("killall whisper-cli 2>/dev/null")
-    hs.notify.new({ title = "local-whisper", informativeText = "Stopped" }):send()
+    hs.notify.new({ title = "Thinking Out Loud", informativeText = "Stopped" }):send()
 end
 
 --------------------------------------------------------------------------------
@@ -2011,7 +2011,7 @@ startMeeting = function()
     meetingTranscribeTimer = hs.timer.doEvery(MEETING_CHUNK_SECONDS + 2, processMeetingChunks)
 
     updateMenuBar()
-    hs.notify.new({ title = "local-whisper", informativeText = "Meeting recording started" }):send()
+    hs.notify.new({ title = "Thinking Out Loud", informativeText = "Meeting recording started" }):send()
 end
 
 -- Stop meeting recording
@@ -2094,6 +2094,6 @@ local enterStatus = getEnterMode() and "⏎" or ""
 local actionsFlag = actionsEnabled and " +actions" or ""
 log("loaded (trigger=" .. TRIGGER_KEY .. ", lang=" .. getLang() .. ", output=" .. getOutputMode() .. ", model=" .. getModelName() .. ", preferred=" .. table.concat(getPreferredLangs(), ",") .. ")")
 hs.notify.new({
-    title = "local-whisper",
+    title = "Thinking Out Loud",
     informativeText = "Loaded (" .. getLang():upper() .. " / " .. getOutputMode():upper() .. enterStatus .. " / " .. getModelName() .. actionsFlag .. ") — hold " .. TRIGGER_KEY
 }):send()
