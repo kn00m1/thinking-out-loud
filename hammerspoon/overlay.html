@@ -11,7 +11,46 @@
     -webkit-font-smoothing: antialiased;
   }
   body {
-    display: flex; align-items: center; justify-content: center;
+    /* Column layout: transcript card grows upward from the pill.
+       Pill stays anchored near the bottom so it doesn't jump around. */
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: flex-end;
+    gap: 8px; padding: 10px 10px 14px 10px;
+    box-sizing: border-box;
+  }
+
+  /* Transcript card — theme-independent dark glass for guaranteed legibility
+     over any wallpaper. Sits above the pill, only shown when body.has-transcript. */
+  .transcript-card {
+    display: none;
+    width: fit-content;   /* sizes to content */
+    min-width: 200px;
+    max-width: 360px;
+    max-height: 160px;    /* ~8 lines; scroll past that */
+    overflow-y: auto;
+    padding: 10px 14px;
+    border-radius: 14px;
+    background: rgba(20, 20, 22, 0.78);
+    backdrop-filter: blur(24px) saturate(1.4);
+    -webkit-backdrop-filter: blur(24px) saturate(1.4);
+    box-shadow: 0 8px 24px rgba(0,0,0,0.35), inset 0 0 0 0.5px rgba(255,255,255,0.12);
+    color: #f4f4f5;
+    font-size: 13px; line-height: 1.5;
+    letter-spacing: 0.01em;
+    text-align: left;
+    white-space: pre-wrap; word-break: break-word;
+    transition: max-height 0.15s ease-out;
+  }
+  body.has-transcript .transcript-card { display: block; }
+  /* Hide scrollbar chrome — content-only look */
+  .transcript-card::-webkit-scrollbar { width: 0; }
+  /* Delta text fades in so new words read as additions, not a whole repaint. */
+  .transcript-card .tx-new {
+    animation: txFadeIn 0.25s ease-out;
+  }
+  @keyframes txFadeIn {
+    from { opacity: 0.2; }
+    to   { opacity: 1; }
   }
 
   /* ─── Shared primitives ─────────────────────────────────────── */
@@ -30,16 +69,27 @@
     0%, 100% { opacity: 0.95; transform: scale(1); }
     50% { opacity: 0.4; transform: scale(0.8); }
   }
-  .wave { display: flex; align-items: center; flex: 1 1 auto; justify-content: center; }
+  /* Refine states — override per-theme dot color + pulse speed. */
+  body.refine-refining .dot {
+    background: #f59e0b !important;
+    animation: pulseDot 0.9s ease-in-out infinite;
+  }
+  body.refine-error .dot {
+    background: #ef4444 !important;
+    animation: flashDot 0.35s ease-in-out 4;
+  }
+  @keyframes flashDot {
+    0%, 100% { opacity: 1; transform: scale(1.1); }
+    50% { opacity: 0.3; transform: scale(0.7); }
+  }
+  .wave { display: flex; align-items: center; flex: 1 1 auto; justify-content: space-between; }
   .wave span {
     border-radius: 1px;
     height: 20%;
     animation: waveBar 1.1s ease-in-out infinite;
   }
-  /* Overlay visible = recording in progress. Bars always dance.
-     When transcript is shown (post-recording), we hide bars + dot. */
-  body.has-transcript .dot,
-  body.has-transcript .wave { display: none; }
+  /* Pill stays visible throughout (recording → refining → brief linger).
+     The transcript lives in the card above, not inside the pill. */
   .wave span:nth-child(1)  { animation-delay: -0.00s; }
   .wave span:nth-child(2)  { animation-delay: -0.07s; }
   .wave span:nth-child(3)  { animation-delay: -0.14s; }
@@ -69,32 +119,27 @@
     75%  { height: 90%; opacity: 1; }
     90%  { height: 20%; opacity: 0.6; }
   }
+  /* Live-metered waveform: Lua pushes RMS levels via window.lw.level(), JS sets
+     inline heights. The CSS fallback animation is disabled while live. */
+  .wave.live span {
+    animation: none !important;
+    transition: height 60ms linear, opacity 60ms linear;
+  }
   .timer {
     font-family: "SF Mono", "JetBrains Mono", monospace;
     font-size: 10.5px; opacity: 0.65;
     flex: 0 0 auto; letter-spacing: 0.03em;
   }
-  body:not(.recording) .timer { opacity: 0; }
+  /* Timer stays visible throughout so its layout slot doesn't leave a dead
+     gap next to the bars during the non-recording linger phase. */
 
-  .transcript {
-    display: none;
-    font-size: 12.5px; line-height: 1.4;
-    max-width: 100%;
-    padding: 0 8px;
-    text-align: center;
-    font-weight: 400;
-    letter-spacing: 0.01em;
-  }
-  body.has-transcript .overlay > .dot,
-  body.has-transcript .overlay > .wave,
-  body.has-transcript .overlay > .timer { display: none; }
-  body.has-transcript .overlay > .transcript { display: block; }
+  /* (old in-pill .transcript removed — text now renders in .transcript-card above.) */
 
   /* ===========================================================
      ★ LIQUID GLASS — Apple iOS 26 / macOS Tahoe
      =========================================================== */
   body.theme-liquid .overlay {
-    width: 320px; height: 48px;
+    width: 260px; height: 46px;
     padding: 0 22px;
     /* Dark tint behind the glass so white contents stay legible over ANY backdrop
        (light wallpaper, light browser window, etc). Without this the white
@@ -139,7 +184,7 @@
 
   /* ─── Editorial ─────────────────────────────────────────────── */
   body.theme-editorial .overlay {
-    width: 340px; height: 40px;
+    width: 280px; height: 40px;
     padding: 0 18px 0 14px;
     background: #111112;
     border: 1px solid rgba(255,255,255,0.08);
@@ -162,7 +207,7 @@
 
   /* ─── Fog ───────────────────────────────────────────────────── */
   body.theme-fog .overlay {
-    width: 320px; height: 44px; padding: 0 22px;
+    width: 260px; height: 44px; padding: 0 22px;
     background: #ece6dc; border-radius: 22px; gap: 14px;
     box-shadow: 0 8px 24px -8px rgba(0,0,0,0.25),
                 0 1px 2px rgba(0,0,0,0.1),
@@ -176,7 +221,7 @@
 
   /* ─── Ink ───────────────────────────────────────────────────── */
   body.theme-ink .overlay {
-    width: 320px; height: 44px; padding: 0 22px;
+    width: 260px; height: 44px; padding: 0 22px;
     background: #15151a;
     border: 1px solid rgba(232,224,208,0.08);
     border-radius: 22px; gap: 14px; color: #e8e0d0;
@@ -189,7 +234,7 @@
 
   /* ─── Glass Black ───────────────────────────────────────────── */
   body.theme-glass-black .overlay {
-    width: 320px; padding: 10px 18px;
+    width: 260px; padding: 10px 18px;
     background: rgba(18,18,22,0.55);
     backdrop-filter: blur(22px) saturate(1.4);
     -webkit-backdrop-filter: blur(22px) saturate(1.4);
@@ -204,7 +249,7 @@
 
   /* ─── Neon ──────────────────────────────────────────────────── */
   body.theme-neon .overlay {
-    width: 320px; padding: 10px 18px;
+    width: 260px; padding: 10px 18px;
     background: linear-gradient(135deg, #050010 0%, #0a0014 100%);
     border: 1px solid rgba(255,0,200,0.4);
     border-radius: 28px; gap: 12px; color: #00ffff;
@@ -222,7 +267,7 @@
 
   /* ─── Arc Card ──────────────────────────────────────────────── */
   body.theme-arc-card .overlay {
-    width: 300px; padding: 14px 18px;
+    width: 240px; padding: 14px 18px;
     background: white; border-radius: 16px; gap: 12px;
     font-family: -apple-system, "SF Pro Rounded", sans-serif;
     font-weight: 500; color: #1c1c1e;
@@ -238,11 +283,11 @@
 </style>
 </head>
 <body class="theme-liquid">
+  <div class="transcript-card"></div>
   <div class="overlay">
     <div class="dot"></div>
     <div class="wave"><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span></div>
     <div class="timer">0:00</div>
-    <div class="transcript"></div>
   </div>
 <script>
   // Lua ↔ JS bridge. Lua calls these via overlay:evaluateJavaScript("lw.foo(...)").
@@ -250,19 +295,113 @@
     setRecording(on) {
       document.body.classList.toggle("recording", !!on);
       if (on) {
-        document.body.classList.remove("has-transcript");
-        document.querySelector(".transcript").textContent = "";
+        document.body.classList.remove("has-transcript", "refine-refining", "refine-error");
+        const card = document.querySelector(".transcript-card");
+        if (card) { card.textContent = ""; card._tx = ""; }
       }
     },
     setTimer(txt) {
       document.querySelector(".timer").textContent = txt || "0:00";
     },
     setTranscript(txt) {
-      const el = document.querySelector(".transcript");
-      el.textContent = txt || "";
+      const el = document.querySelector(".transcript-card");
       document.body.classList.toggle("has-transcript", !!txt);
+      if (!txt) { el.textContent = ""; el._tx = ""; return; }
+
+      // Diff against what's already rendered. Whisper partials re-transcribe
+      // the whole stream, so usually the new text extends what's shown.
+      // Only append the delta — no repaint on stable text → no flicker.
+      const prev = el._tx || "";
+      let common = 0;
+      const n = Math.min(prev.length, txt.length);
+      while (common < n && prev[common] === txt[common]) common++;
+
+      // If the new text shares ANY prefix with what's shown (even a few chars),
+      // preserve that prefix and only re-render the divergent tail. This keeps
+      // the card stable during normal cumulative growth; only truly re-worded
+      // sections flicker, and only for their own segment.
+      if (common === prev.length && common > 0) {
+        // Pure append — stable text untouched; just add the new tail span.
+        const span = document.createElement("span");
+        span.className = "tx-new";
+        span.textContent = txt.slice(common);
+        el.appendChild(span);
+      } else if (common > 0 && prev.length > 0) {
+        // Whisper re-worded from `common` onward. Keep stable prefix, replace
+        // only the tail. The earlier nodes are consolidated into one text node
+        // (cheaper) but the user still sees those words uninterrupted.
+        el.textContent = txt.slice(0, common);
+        const span = document.createElement("span");
+        span.className = "tx-new";
+        span.textContent = txt.slice(common);
+        el.appendChild(span);
+      } else {
+        // First paint (prev was empty) or no overlap — single render.
+        el.textContent = txt;
+      }
+      el._tx = txt;
+      el.scrollTop = el.scrollHeight;
+    },
+    // Refine status driven from Lua. state: "idle" | "refining" | "error".
+    // `reason` is the structured error code (shown as tooltip for debugging).
+    setRefineState(state, reason) {
+      const b = document.body;
+      b.classList.remove("refine-refining", "refine-error");
+      if (state === "refining") {
+        b.classList.add("refine-refining");
+      } else if (state === "error") {
+        b.classList.add("refine-error");
+        if (reason) b.setAttribute("data-refine-reason", reason);
+        // Auto-clear the red flash after the CSS animation finishes.
+        setTimeout(() => b.classList.remove("refine-error"), 1500);
+      }
     },
   };
+
+  // Audio-reactive waveform. Lua calls window.lw.level(0..1) at ~20Hz from the
+  // ffmpeg astats stream callback. Each call advances a ring buffer; bars show
+  // the last N samples (oldest left, newest right). Falls back to the CSS
+  // keyframe animation if level() is never called.
+  (function() {
+    const wave = document.querySelector(".wave");
+    const bars = wave.querySelectorAll("span");
+    const N = bars.length;
+    const ring = new Float32Array(N);
+    let head = -1;
+    let rafPending = false;
+    let idleTimer = null;
+
+    function render() {
+      rafPending = false;
+      for (let i = 0; i < N; i++) {
+        const age = (N - 1) - i;
+        const idx = (head - age + N) % N;
+        const v = ring[idx];
+        const h = 15 + v * 80;
+        bars[i].style.height = h.toFixed(1) + "%";
+        bars[i].style.opacity = (0.5 + v * 0.5).toFixed(2);
+      }
+    }
+
+    window.lw.level = function(v) {
+      if (!wave.classList.contains("live")) wave.classList.add("live");
+      head = (head + 1) % N;
+      ring[head] = v < 0 ? 0 : (v > 1 ? 1 : v);
+      if (!rafPending) {
+        rafPending = true;
+        requestAnimationFrame(render);
+      }
+      clearTimeout(idleTimer);
+      idleTimer = setTimeout(() => {
+        wave.classList.remove("live");
+        ring.fill(0); head = -1;
+        for (let i = 0; i < N; i++) {
+          bars[i].style.height = "";
+          bars[i].style.opacity = "";
+        }
+      }, 300);
+    };
+  })();
 </script>
 </body>
 </html>

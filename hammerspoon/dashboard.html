@@ -64,6 +64,7 @@
   }
   .icon-btn:hover { background: var(--panel-hi); border-color: rgba(255,255,255,.14); }
   .icon-btn.danger { color: var(--danger); }
+  .icon-btn.active { background: var(--panel-hi); border-color: rgba(201,184,138,.4); color: var(--accent); }
 
   main {
     flex: 1 1 auto;
@@ -160,6 +161,121 @@
   }
   .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
 
+  /* Stats view */
+  .stats {
+    padding: 24px 24px 48px;
+    max-width: 780px;
+  }
+  .stats .section-label {
+    font-size: 10.5px;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.14em;
+    color: var(--accent);
+    margin: 24px 0 10px;
+  }
+  .stats .section-label:first-child { margin-top: 0; }
+  .card-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 10px;
+  }
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 14px 16px;
+  }
+  .card .card-value {
+    font-size: 22px;
+    font-weight: 500;
+    letter-spacing: -0.01em;
+    color: var(--fg);
+    font-variant-numeric: tabular-nums;
+    line-height: 1.1;
+  }
+  .card .card-label {
+    font-size: 10.5px;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    margin-top: 6px;
+  }
+  .card .card-sub {
+    font-size: 11px;
+    color: var(--muted);
+    margin-top: 4px;
+    font-variant-numeric: tabular-nums;
+  }
+  .bar-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .bar-row {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 10px;
+    align-items: center;
+    padding: 7px 0;
+    font-size: 12.5px;
+  }
+  .bar-row .bar-name {
+    position: relative;
+    padding: 4px 10px 4px 10px;
+    border-radius: 6px;
+    overflow: hidden;
+    background: var(--panel);
+    border: 1px solid var(--border);
+  }
+  .bar-row .bar-fill {
+    position: absolute; top: 0; left: 0; bottom: 0;
+    background: rgba(201,184,138,.12);
+    border-right: 1px solid rgba(201,184,138,.28);
+    transition: width .3s;
+  }
+  .bar-row .bar-name span { position: relative; }
+  .bar-row .bar-count {
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
+    font-size: 11.5px;
+    white-space: nowrap;
+  }
+  .hour-chart {
+    display: grid;
+    grid-template-columns: repeat(24, 1fr);
+    gap: 3px;
+    height: 64px;
+    align-items: flex-end;
+    padding: 8px 0 4px;
+  }
+  .hour-chart .hour-bar {
+    background: rgba(201,184,138,.22);
+    border-radius: 3px 3px 0 0;
+    min-height: 2px;
+    transition: background .12s;
+    position: relative;
+  }
+  .hour-chart .hour-bar:hover { background: rgba(201,184,138,.55); }
+  .hour-chart .hour-bar[data-peak="1"] { background: rgba(201,184,138,.55); }
+  .hour-axis {
+    display: grid;
+    grid-template-columns: repeat(24, 1fr);
+    gap: 3px;
+    font-size: 9.5px;
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
+    letter-spacing: 0.02em;
+    text-align: center;
+  }
+  .hour-axis span { visibility: hidden; }
+  .hour-axis span:nth-child(6n+1) { visibility: visible; }
+  .empty-stats {
+    padding: 40px 0;
+    color: var(--muted);
+    text-align: center;
+  }
+
   /* Scrollbar */
   main::-webkit-scrollbar { width: 8px; }
   main::-webkit-scrollbar-thumb {
@@ -175,12 +291,15 @@
   <h1>Thinking Out Loud</h1>
   <span class="stat" id="stat">0 entries</span>
   <input class="search" id="search" placeholder="Search dictations…" autocomplete="off" spellcheck="false">
+  <button class="icon-btn" id="statsBtn">Stats</button>
   <button class="icon-btn" id="exportBtn">Export</button>
 </header>
 
 <main id="list">
   <div class="empty" id="empty"><h2>No dictations yet</h2>Press Right Ctrl and speak to add one.</div>
 </main>
+
+<main id="stats" class="stats" style="display:none;"></main>
 
 <div class="toast" id="toast"></div>
 
@@ -335,6 +454,132 @@
     toast("Exported to ~/Downloads");
   });
 
+  // Stats view
+  function computeStats(entries) {
+    const now = new Date();
+    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime() / 1000;
+    const weekStart = todayStart - 6 * 86400;
+    const monthStart = todayStart - 29 * 86400;
+
+    let chars = 0, refined = 0, inserted = 0;
+    let today = 0, week = 0, month = 0;
+    const apps = new Map();
+    const models = new Map();
+    const hours = new Array(24).fill(0);
+
+    entries.forEach(e => {
+      const c = e.chars || (e.text || "").length || 0;
+      chars += c;
+      if (e.refined) refined++;
+      if (e.inserted) inserted++;
+      if (e.time >= todayStart) today++;
+      if (e.time >= weekStart) week++;
+      if (e.time >= monthStart) month++;
+
+      const app = e.app || "Unknown";
+      apps.set(app, (apps.get(app) || 0) + 1);
+      const model = e.model || "(none)";
+      models.set(model, (models.get(model) || 0) + 1);
+
+      const h = new Date(e.time * 1000).getHours();
+      hours[h]++;
+    });
+
+    const n = entries.length;
+    const words = Math.round(chars / 5);
+    // ~40 wpm typing speed baseline; minutes saved vs typing it yourself
+    const minutesSaved = Math.round(words / 40);
+
+    const topApps = [...apps.entries()].sort((a, b) => b[1] - a[1]).slice(0, 5);
+    const topModels = [...models.entries()].sort((a, b) => b[1] - a[1]);
+
+    return { n, chars, words, minutesSaved, refined, inserted, today, week, month, topApps, topModels, hours };
+  }
+
+  function renderBarList(rows, total) {
+    if (!rows.length) return `<div class="empty-stats">No data yet.</div>`;
+    const max = Math.max(...rows.map(r => r[1]));
+    return `<div class="bar-list">${rows.map(([name, count]) => {
+      const pct = total > 0 ? Math.round((count / total) * 100) : 0;
+      const fillPct = max > 0 ? (count / max) * 100 : 0;
+      return `<div class="bar-row">
+        <div class="bar-name">
+          <div class="bar-fill" style="width:${fillPct}%"></div>
+          <span>${escapeHtml(name)}</span>
+        </div>
+        <div class="bar-count">${count} · ${pct}%</div>
+      </div>`;
+    }).join("")}</div>`;
+  }
+
+  function renderHourChart(hours) {
+    const max = Math.max(...hours, 1);
+    const peak = hours.indexOf(max);
+    const bars = hours.map((c, h) => {
+      const pct = (c / max) * 100;
+      const isPeak = c > 0 && h === peak ? "1" : "0";
+      return `<div class="hour-bar" style="height:${pct}%" data-peak="${isPeak}" title="${h}:00 — ${c}"></div>`;
+    }).join("");
+    const axis = Array.from({ length: 24 }, (_, h) => `<span>${h}</span>`).join("");
+    return `<div class="hour-chart">${bars}</div><div class="hour-axis">${axis}</div>`;
+  }
+
+  function renderStats() {
+    const s = computeStats(history);
+    const container = document.getElementById("stats");
+    if (s.n === 0) {
+      container.innerHTML = `<div class="empty-stats">No dictations yet — stats will show up here.</div>`;
+      return;
+    }
+    const refinePct = Math.round((s.refined / s.n) * 100);
+    const insertPct = Math.round((s.inserted / s.n) * 100);
+    container.innerHTML = `
+      <div class="section-label">Summary</div>
+      <div class="card-grid">
+        <div class="card">
+          <div class="card-value">${s.n}</div>
+          <div class="card-label">Dictations</div>
+          <div class="card-sub">${s.today} today · ${s.week} this wk</div>
+        </div>
+        <div class="card">
+          <div class="card-value">${s.words.toLocaleString()}</div>
+          <div class="card-label">Words</div>
+          <div class="card-sub">${s.chars.toLocaleString()} chars</div>
+        </div>
+        <div class="card">
+          <div class="card-value">~${s.minutesSaved}m</div>
+          <div class="card-label">Saved vs typing</div>
+          <div class="card-sub">at 40 wpm baseline</div>
+        </div>
+        <div class="card">
+          <div class="card-value">${insertPct}%</div>
+          <div class="card-label">Inserted</div>
+          <div class="card-sub">${refinePct}% refined</div>
+        </div>
+      </div>
+
+      <div class="section-label">Activity by hour</div>
+      ${renderHourChart(s.hours)}
+
+      <div class="section-label">Top apps</div>
+      ${renderBarList(s.topApps, s.n)}
+
+      <div class="section-label">Models</div>
+      ${renderBarList(s.topModels, s.n)}
+    `;
+  }
+
+  let statsMode = false;
+  function toggleStats() {
+    statsMode = !statsMode;
+    document.getElementById("list").style.display = statsMode ? "none" : "";
+    document.getElementById("stats").style.display = statsMode ? "" : "none";
+    document.getElementById("search").style.display = statsMode ? "none" : "";
+    document.getElementById("statsBtn").classList.toggle("active", statsMode);
+    if (statsMode) renderStats();
+  }
+  document.getElementById("statsBtn").addEventListener("click", toggleStats);
+
   // Lua-facing API
   window.lw = {
     load(json) {
@@ -344,6 +589,7 @@
         history = [];
       }
       renderList(document.getElementById("search").value);
+      if (statsMode) renderStats();
     },
   };
 

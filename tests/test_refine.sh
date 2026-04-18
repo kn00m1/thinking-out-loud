@@ -11,7 +11,7 @@ BOLD='\033[1m'
 NC='\033[0m'
 
 OLLAMA_URL="http://localhost:11434/api/generate"
-CONFIG_DIR="$HOME/.local-whisper"
+CONFIG_DIR="$HOME/.thinking-out-loud"
 
 # Read model from config or use default
 MODEL_FILE="$CONFIG_DIR/refine_model"
@@ -25,7 +25,23 @@ PROMPT_FILE="$CONFIG_DIR/refine_prompt"
 if [[ -f "$PROMPT_FILE" ]] && [[ -s "$PROMPT_FILE" ]]; then
     PROMPT=$(cat "$PROMPT_FILE")
 else
-    PROMPT="You are a text cleanup tool. Output ONLY the cleaned text, nothing else. Fix punctuation and capitalization. Remove ONLY filler words like um, uh, you know, I mean. Do NOT remove sentences or meaningful content. When the text lists sequential items using first/second/third or one/two/three, convert them into a numbered list with each item on a new line. NEVER add commentary or preamble. Just output the cleaned text."
+    PROMPT=$(cat <<'EOP'
+You are a text cleanup tool. Output ONLY the cleaned text, nothing else.
+
+Rules:
+- Fix punctuation and capitalization.
+- Remove filler words: um, uh, you know, I mean.
+- Keep every sentence. Do not drop content.
+- Do not add commentary or preambles like "Here is" or "Sure".
+
+Numbered list rule (follow exactly):
+- DEFAULT: output flowing sentences with NO numbering (no "1.", "2.", "3.").
+- ONLY add numbered list formatting if the input literally contains the words "first", "second", "third" (or "one", "two", "three") used as enumeration markers.
+- Example A (NO numbering): "Checking it now. It is coming. I do not like it." → "Checking it now. It is coming. I do not like it."
+- Example B (USE numbering): "First, buy milk. Second, eat bread. Third, sleep." → "1. Buy milk.\n2. Eat bread.\n3. Sleep."
+- If unsure, DO NOT number.
+EOP
+)
 fi
 
 PASS=0
@@ -160,6 +176,14 @@ test_case "One/two/three → numbered list" \
 test_case "Sequential items with context" \
     "I am going to test the itemized feature. First, testing the first item. Second, testing the second item. Third, testing the third item." \
     "has_newlines" "3"
+
+test_case "Plain sentences stay as sentences (no auto-numbering)" \
+    "Checking it right now. It is coming but I don't think I like it. It is too spread apart." \
+    "not_contains" "^1\. "
+
+test_case "Three sentences with no enumeration words stay inline" \
+    "The build finished. Tests passed. The PR is ready for review." \
+    "not_contains" "^1\. "
 
 echo ""
 echo -e "${BOLD}--- No preamble ---${NC}"

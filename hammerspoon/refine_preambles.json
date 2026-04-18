@@ -1,0 +1,14 @@
+{
+  "_comment": "LLM preambles to strip from refine output. Each entry is a Lua pattern matched at the start of the refined text (case handled by the pattern itself). Copy this file to ~/.thinking-out-loud/refine_preambles.json to customize. The built-in defaults in init.lua are used if this file is absent or invalid.",
+  "patterns": [
+    "^[Hh]ere%s+is%s+the%s+cleaned%s+text:%s*\n?",
+    "^[Hh]ere'?s?%s+the%s+cleaned[%-]?%s*text:%s*\n?",
+    "^[Hh]ere%s+is%s+the%s+refined%s+text:%s*\n?",
+    "^[Hh]ere'?s?%s+the%s+refined%s+text:%s*\n?",
+    "^[Hh]ere%s+is%s+the%s+corrected%s+text:%s*\n?",
+    "^[Ss]ure[,!]?%s*[Hh]?e?r?e?'?s?%s*t?h?e?%s*",
+    "^[Oo]kay[,!]?%s+here'?s?%s*[^\n]*:%s*\n?",
+    "^[Cc]leaned%s+text:%s*\n?",
+    "^[Rr]efined:%s*\n?"
+  ]
+}

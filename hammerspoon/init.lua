@@ -21,7 +21,33 @@ os.execute("mkdir -p '" .. CONFIG_DIR .. "'")
 local FFMPEG = hs.fs.attributes("/opt/homebrew/bin/ffmpeg") and "/opt/homebrew/bin/ffmpeg" or "/usr/local/bin/ffmpeg"
 local WHISPER_BIN = HOME .. "/whisper.cpp/build/bin/whisper-cli"
 local MODELS_DIR = HOME .. "/whisper.cpp/models"
-local MODEL_FILE = CONFIG_DIR .. "/model"
+
+-- All user/app file paths live in a single table so the main chunk stays well
+-- under Lua's 200-local ceiling. One module-local (`P`) replaces ~18 separate
+-- `*_FILE` / `*_PATH` declarations that used to sit at chunk scope.
+local P = {
+    -- User preferences (all in ~/.thinking-out-loud/)
+    modelFile           = CONFIG_DIR .. "/model",
+    langFile            = CONFIG_DIR .. "/lang",
+    outputFile          = CONFIG_DIR .. "/output",
+    preferredLangsFile  = CONFIG_DIR .. "/preferred_langs",
+    enterFile           = CONFIG_DIR .. "/enter",
+    promptFile          = CONFIG_DIR .. "/prompt",
+    recentFile          = CONFIG_DIR .. "/recent.json",
+    historyFile         = CONFIG_DIR .. "/history.json",
+    audioDeviceFile     = CONFIG_DIR .. "/audio_device",
+    themeFile           = CONFIG_DIR .. "/theme",
+    -- LLM refinement
+    refineFile          = CONFIG_DIR .. "/refine",
+    refinePromptFile    = CONFIG_DIR .. "/refine_prompt",
+    refineModelFile     = CONFIG_DIR .. "/refine_model",
+    refinePreamblesFile = CONFIG_DIR .. "/refine_preambles.json",
+    -- System paths (outside CONFIG_DIR)
+    logFile             = WHISPER_TMP .. "/whisper-dictate.log",
+    actionsFile         = HOME .. "/.hammerspoon/local_whisper_actions.lua",
+    overlayHtml         = HOME .. "/.hammerspoon/overlay.html",
+    dashboardHtml       = HOME .. "/.hammerspoon/dashboard.html",
+}
 
 -- Scan available models
 local function getAvailableModels()
@@ -39,7 +65,7 @@ end
 -- Get/set active model
 local function getModelName()
     local saved = ""
-    local f = io.open(MODEL_FILE, "r")
+    local f = io.open(P.modelFile, "r")
     if f then saved = f:read("*a"):gsub("%s+", ""); f:close() end
     if saved ~= "" then
         -- Verify model file exists
@@ -76,34 +102,53 @@ end
 -- Trigger key: "rightAlt", "rightCmd", "rightCtrl"
 local TRIGGER_KEY = "rightCtrl"
 
--- User preference files (all in CONFIG_DIR)
-local LANG_FILE = CONFIG_DIR .. "/lang"
-local OUTPUT_FILE = CONFIG_DIR .. "/output"
-local PREFERRED_LANGS_FILE = CONFIG_DIR .. "/preferred_langs"
-local ENTER_FILE = CONFIG_DIR .. "/enter"
-local PROMPT_FILE = CONFIG_DIR .. "/prompt"
-local RECENT_FILE = CONFIG_DIR .. "/recent.json"
-local AUDIO_DEVICE_FILE = CONFIG_DIR .. "/audio_device"
-local THEME_FILE = CONFIG_DIR .. "/theme"
-local LOG_FILE = WHISPER_TMP .. "/whisper-dictate.log"
-
--- Action hooks config
-local ACTIONS_FILE = HOME .. "/.hammerspoon/local_whisper_actions.lua"
+-- (File paths consolidated into the `P` table above.)
 
 -- Auto-stop on silence
 local AUTO_STOP_SILENCE_SECONDS = 3
 local AUTO_STOP_THRESHOLD_DB = -40
 
 -- LLM refinement (requires Ollama)
-local REFINE_FILE = CONFIG_DIR .. "/refine"
-local REFINE_PROMPT_FILE = CONFIG_DIR .. "/refine_prompt"
-local REFINE_MODEL_FILE = CONFIG_DIR .. "/refine_model"
 local REFINE_DEFAULT_MODEL = "gemma3:4b"
 local REFINE_MIN_CHARS = 50  -- skip refinement for short text
-local REFINE_DEFAULT_PROMPT = "You are a text cleanup tool. Output ONLY the cleaned text, nothing else. Fix punctuation and capitalization. Remove ONLY filler words like um, uh, you know, I mean. Do NOT remove sentences or meaningful content. When the text lists sequential items using first/second/third or one/two/three, convert them into a numbered list with each item on a new line. NEVER add commentary or preamble. Just output the cleaned text."
+-- Refine timeout scales with input length. Qwen 2.5 3B on M4 runs ~50 tok/s;
+-- a paragraph-length output needs several seconds. Too-tight timeout causes
+-- long dictations to silently fall back to raw text.
+local REFINE_TIMEOUT_BASE = 4.0     -- seconds baseline (cold + short text)
+local REFINE_TIMEOUT_PER_CHAR = 0.03  -- +30ms per input char
+local REFINE_TIMEOUT_MAX = 20.0     -- hard ceiling for very long dictations
+local function refineTimeoutFor(text)
+    local t = REFINE_TIMEOUT_BASE + #text * REFINE_TIMEOUT_PER_CHAR
+    if t > REFINE_TIMEOUT_MAX then t = REFINE_TIMEOUT_MAX end
+    return t
+end
+local REFINE_WARM_INTERVAL = 60  -- seconds between warm-keeper pings
+local REFINE_WARM_KEEP_ALIVE = "10m"  -- Ollama keep_alive window
+local REFINE_DEFAULT_PROMPT = [[You are a text cleanup tool. Output ONLY the cleaned text, nothing else.
+
+Rules:
+- Fix punctuation and capitalization.
+- Remove filler words: um, uh, you know, I mean.
+- Keep every sentence. Do not drop content.
+- Do not add commentary or preambles like "Here is" or "Sure".
+
+Numbered list rule (follow exactly):
+- DEFAULT: output flowing sentences with NO numbering (no "1.", "2.", "3.").
+- ONLY add numbered list formatting if the input literally contains the words "first", "second", "third" (or "one", "two", "three") used as enumeration markers.
+- Example A (NO numbering): "Checking it now. It is coming. I do not like it." → "Checking it now. It is coming. I do not like it."
+- Example B (USE numbering): "First, buy milk. Second, eat bread. Third, sleep." → "1. Buy milk.\n2. Eat bread.\n3. Sleep."
+- If unsure, DO NOT number.]]
+
+-- Fallback preamble patterns used when P.refinePreamblesFile is missing/invalid.
+local REFINE_DEFAULT_PREAMBLES = {
+    "^[Hh]ere%s+is%s+the%s+cleaned%s+text:%s*\n?",
+    "^[Hh]ere'?s?%s+the%s+cleaned[%-]?%s*text:%s*\n?",
+    "^[Hh]ere%s+is%s+the%s+refined%s+text:%s*\n?",
+    "^[Ss]ure[,!]?%s*[Hh]?e?r?e?'?s?%s*t?h?e?%s*",
+}
 
 local function getRefineModel()
-    local f = io.open(REFINE_MODEL_FILE, "r")
+    local f = io.open(P.refineModelFile, "r")
     if f then
         local val = f:read("*a"):gsub("%s+", ""); f:close()
         if val ~= "" then return val end
@@ -112,7 +157,7 @@ local function getRefineModel()
 end
 
 local function getRefinePrompt()
-    local f = io.open(REFINE_PROMPT_FILE, "r")
+    local f = io.open(P.refinePromptFile, "r")
     if f then
         local content = f:read("*a"); f:close()
         content = content:gsub("^%s+", ""):gsub("%s+$", "")
@@ -130,25 +175,30 @@ local function hasOllama()
 end
 
 local function getRefineMode()
-    local f = io.open(REFINE_FILE, "r")
+    local f = io.open(P.refineFile, "r")
     if not f then return false end
     local val = f:read("*a"):gsub("%s+", ""); f:close()
     return val == "on"
 end
 
 local function setRefineMode(on)
-    local f = io.open(REFINE_FILE, "w")
+    local f = io.open(P.refineFile, "w")
     if f then f:write(on and "on" or "off"); f:close() end
 end
+
+-- Forward decls for warm-keeper (defined alongside refineWithOllama below).
+local startWarmKeeperRef, stopWarmKeeperRef
 
 local function cycleRefine()
     local current = getRefineMode()
     setRefineMode(not current)
+    if not current and startWarmKeeperRef then startWarmKeeperRef()
+    elseif current and stopWarmKeeperRef then stopWarmKeeperRef() end
 end
 
 -- Timing
 local PARTIAL_INTERVAL = 2.0   -- seconds between partial transcriptions
-local OVERLAY_LINGER = 0.5     -- seconds to show final text before closing
+local OVERLAY_LINGER = 2.0     -- seconds to show final text before closing
 
 -- Known whisper hallucinations on silence/short audio
 local HALLUCINATIONS = {
@@ -183,7 +233,7 @@ end
 os.execute("mkdir -p '" .. WHISPER_TMP .. "'")
 
 local function log(msg)
-    local f = io.open(LOG_FILE, "a")
+    local f = io.open(P.logFile, "a")
     if f then
         f:write(os.date("[%H:%M:%S] ") .. msg .. "\n")
         f:close()
@@ -206,19 +256,19 @@ local function writeFile(path, content)
 end
 
 local function getLang()
-    local lang = readFile(LANG_FILE):gsub("%s+", "")
+    local lang = readFile(P.langFile):gsub("%s+", "")
     if lang == "en" or lang == "pt" or lang == "auto" then return lang end
     return "en"
 end
 
 local function getOutputMode()
-    local mode = readFile(OUTPUT_FILE):gsub("%s+", "")
+    local mode = readFile(P.outputFile):gsub("%s+", "")
     if mode == "type" then return "type" end
     return "paste"
 end
 
 local function getPreferredLangs()
-    local content = readFile(PREFERRED_LANGS_FILE):gsub("%s+$", "")
+    local content = readFile(P.preferredLangsFile):gsub("%s+$", "")
     if content == "" then return {"en", "pt"} end
     local langs = {}
     for lang in content:gmatch("[^,]+") do
@@ -229,7 +279,7 @@ local function getPreferredLangs()
 end
 
 local function getEnterMode()
-    local mode = readFile(ENTER_FILE):gsub("%s+", "")
+    local mode = readFile(P.enterFile):gsub("%s+", "")
     return mode == "on"
 end
 
@@ -290,45 +340,144 @@ local function postProcess(text, appBundleID)
     return text
 end
 
+-- Forward decl — set later once the overlay bridge is defined.
+local signalRefineState = function(_, _) end
+
+-- Lazy-loaded preamble patterns. Reload by setting refinePreambles = nil.
+local refinePreambles = nil
+local function getRefinePreambles()
+    if refinePreambles then return refinePreambles end
+    local f = io.open(P.refinePreamblesFile, "r")
+    if f then
+        local content = f:read("*a"); f:close()
+        local ok, parsed = pcall(hs.json.decode, content)
+        if ok and parsed and type(parsed.patterns) == "table" and #parsed.patterns > 0 then
+            refinePreambles = parsed.patterns
+            return refinePreambles
+        end
+        log("refine: preambles file invalid, using defaults")
+    end
+    refinePreambles = REFINE_DEFAULT_PREAMBLES
+    return refinePreambles
+end
+
+local function stripPreambles(text)
+    for _, pat in ipairs(getRefinePreambles()) do
+        text = text:gsub(pat, "", 1)
+    end
+    return text:gsub("^%s+", "")
+end
+
+-- curl exit codes we treat as "Ollama unreachable" (connection refused, DNS, etc).
+local CURL_CONN_FAILED = { [6] = true, [7] = true, [28] = true }
+
 local function refineWithOllama(text, callback)
     if not getRefineMode() or not hasOllama() or #text < REFINE_MIN_CHARS then
         callback(text)
         return
     end
     log("refine: sending to Ollama API (" .. #text .. " chars)")
+    signalRefineState("refining", nil)
     local prompt = getRefinePrompt() .. "\n\n" .. text
     local model = getRefineModel()
-    -- Use Ollama HTTP API (more reliable than CLI, avoids version mismatch issues)
     local jsonPayload = hs.json.encode({
         model = model,
         prompt = prompt,
         stream = false,
+        keep_alive = REFINE_WARM_KEEP_ALIVE,
     })
     local tmpPayload = WHISPER_TMP .. "/refine_payload.json"
     local f = io.open(tmpPayload, "w")
     if f then f:write(jsonPayload); f:close() end
-    local task = hs.task.new("/usr/bin/curl", function(code, stdout, stderr)
+
+    local settled = false
+    local timeoutTimer = nil
+    local curlTask = nil
+
+    local function finish(reason, refined)
+        if settled then return end
+        settled = true
+        if timeoutTimer then timeoutTimer:stop(); timeoutTimer = nil end
+        if reason == "ok" then
+            log("refine: success (" .. #refined .. " chars)")
+            signalRefineState("idle", nil)
+            callback(refined)
+        else
+            log("refine: " .. reason)
+            signalRefineState("error", reason)
+            callback(text)
+        end
+    end
+
+    local timeout = refineTimeoutFor(text)
+    curlTask = hs.task.new("/usr/bin/curl", function(code, stdout, stderr)
+        if settled then return end
         if code == 0 and stdout and #stdout > 0 then
             local ok, result = pcall(hs.json.decode, stdout)
-            if ok and result and result.response then
-                local refined = result.response:gsub("^%s+", ""):gsub("%s+$", "")
-                -- Strip common LLM preamble
-                refined = refined:gsub("^[Hh]ere%s+is%s+the%s+cleaned%s+text:%s*\n?", "")
-                refined = refined:gsub("^[Hh]ere'?s?%s+the%s+cleaned[%-]?%s*text:%s*\n?", "")
-                refined = refined:gsub("^[Hh]ere%s+is%s+the%s+refined%s+text:%s*\n?", "")
-                refined = refined:gsub("^[Ss]ure[,!]?%s*[Hh]?e?r?e?'?s?%s*t?h?e?%s*", "")
-                refined = refined:gsub("^%s+", "")
-                if refined ~= "" then
-                    log("refine: success (" .. #refined .. " chars)")
-                    callback(refined)
-                    return
+            if ok and result then
+                if result.error then
+                    local err = tostring(result.error)
+                    if err:lower():match("model.*not%s*found") or err:lower():match("not%s*found") then
+                        finish("model_missing", nil); return
+                    end
+                    finish("http_error:" .. err:sub(1, 60), nil); return
+                end
+                if result.response then
+                    local refined = stripPreambles(result.response:gsub("^%s+", ""):gsub("%s+$", ""))
+                    if refined ~= "" then finish("ok", refined); return end
                 end
             end
+            finish("bad_response", nil); return
         end
-        log("refine: failed (code=" .. tostring(code) .. "), using original")
-        callback(text)
+        if CURL_CONN_FAILED[code] then
+            finish("ollama_offline", nil); return
+        end
+        finish("curl_exit_" .. tostring(code), nil)
     end, {
-        "-s", "-X", "POST",
+        "-s", "--max-time", tostring(timeout + 1), "-X", "POST",
+        "http://localhost:11434/api/generate",
+        "-H", "Content-Type: application/json",
+        "-d", "@" .. tmpPayload,
+    })
+    curlTask:setEnvironment({ HOME = HOME, PATH = "/usr/bin:/bin" })
+    curlTask:start()
+
+    timeoutTimer = hs.timer.doAfter(timeout, function()
+        if settled then return end
+        if curlTask and curlTask.isRunning and curlTask:isRunning() then
+            pcall(function() curlTask:terminate() end)
+        end
+        finish("timeout", nil)
+    end)
+end
+
+-- ─── Warm-keeper ────────────────────────────────────────────────────────────
+-- Periodic tiny ping to Ollama so the refine model stays resident. Stops
+-- itself when refine is disabled or Ollama unreachable. Cheap (<50ms on warm).
+local warmTimer = nil
+local warmKickTimer = nil  -- retained to survive GC until the one-shot fires
+local function pingOllama()
+    if not getRefineMode() then return end
+    if not hasOllama() then return end
+    local model = getRefineModel()
+    local payload = hs.json.encode({
+        model = model,
+        prompt = "",
+        stream = false,
+        keep_alive = REFINE_WARM_KEEP_ALIVE,
+    })
+    local tmpPayload = WHISPER_TMP .. "/refine_warm.json"
+    local f = io.open(tmpPayload, "w")
+    if f then f:write(payload); f:close() end
+    local task = hs.task.new("/usr/bin/curl", function(code)
+        -- Silent on success and on connection failures (Ollama may just be
+        -- down transiently; the keeper retries next interval). Log only
+        -- unexpected curl exits so real breakage is visible.
+        if code ~= 0 and not CURL_CONN_FAILED[code] then
+            log("warm: curl exit " .. tostring(code))
+        end
+    end, {
+        "-s", "--max-time", "5", "-X", "POST",
         "http://localhost:11434/api/generate",
         "-H", "Content-Type: application/json",
         "-d", "@" .. tmpPayload,
@@ -336,6 +485,23 @@ local function refineWithOllama(text, callback)
     task:setEnvironment({ HOME = HOME, PATH = "/usr/bin:/bin" })
     task:start()
 end
+
+local function startWarmKeeper()
+    if warmTimer then return end
+    warmTimer = hs.timer.new(REFINE_WARM_INTERVAL, pingOllama)
+    warmTimer:start()
+    warmKickTimer = hs.timer.doAfter(0.5, pingOllama)  -- retained to avoid GC
+end
+
+local function stopWarmKeeper()
+    if warmTimer then warmTimer:stop(); warmTimer = nil end
+end
+
+-- Publish to the forward decls used by cycleRefine above, and kick on load
+-- if refine is already enabled.
+startWarmKeeperRef = startWarmKeeper
+stopWarmKeeperRef = stopWarmKeeper
+if getRefineMode() then startWarmKeeper() end
 
 local function isHallucination(text)
     local lower = text:lower():gsub("^%s+", ""):gsub("%s+$", "")
@@ -366,7 +532,7 @@ end
 local function cycleLang()
     local cycle = { en = "pt", pt = "auto", auto = "en" }
     local next = cycle[getLang()] or "en"
-    writeFile(LANG_FILE, next)
+    writeFile(P.langFile, next)
     return next
 end
 
@@ -382,19 +548,19 @@ local function cycleModel()
         end
     end
     if next == current then next = models[1] end
-    writeFile(MODEL_FILE, next)
+    writeFile(P.modelFile, next)
     return next
 end
 
 local function cycleOutput()
     local next = (getOutputMode() == "paste") and "type" or "paste"
-    writeFile(OUTPUT_FILE, next)
+    writeFile(P.outputFile, next)
     return next
 end
 
 local function cycleEnter()
     local next = getEnterMode() and "off" or "on"
-    writeFile(ENTER_FILE, next)
+    writeFile(P.enterFile, next)
     return next
 end
 
@@ -424,7 +590,7 @@ local function listAudioDevices()
 end
 
 local function setAudioDevice(device)
-    writeFile(AUDIO_DEVICE_FILE, device)
+    writeFile(P.audioDeviceFile, device)
     hs.reload()
 end
 
@@ -440,7 +606,7 @@ end
 
 -- Read custom vocabulary prompt for whisper
 local function getPromptArgs()
-    local content = readFile(PROMPT_FILE):gsub("%s+$", "")
+    local content = readFile(P.promptFile):gsub("%s+$", "")
     if content ~= "" then return { "--prompt", content } end
     return {}
 end
@@ -479,7 +645,7 @@ end
 
 -- Auto-reload: check mtime and reload if file changed
 local function loadActionConfig()
-    local attr = hs.fs.attributes(ACTIONS_FILE)
+    local attr = hs.fs.attributes(P.actionsFile)
     if not attr then
         actionConfig = nil
         actionConfigMtime = 0
@@ -491,7 +657,7 @@ local function loadActionConfig()
         return actionConfig
     end
 
-    local chunk, err = loadfile(ACTIONS_FILE)
+    local chunk, err = loadfile(P.actionsFile)
     if not chunk then
         log("actions: could not load config: " .. tostring(err))
         return nil
@@ -509,7 +675,7 @@ local function loadActionConfig()
 
     actionConfig = cfg
     actionConfigMtime = mtime
-    log("actions: loaded " .. ACTIONS_FILE)
+    log("actions: loaded " .. P.actionsFile)
     return actionConfig
 end
 
@@ -660,19 +826,18 @@ local AVAILABLE_THEMES = { "liquid", "editorial", "fog", "ink", "glass-black", "
 local DEFAULT_THEME = "liquid"
 
 -- Read HTML template once at load. Shared across all overlay instances.
-local OVERLAY_HTML_PATH = HOME .. "/.hammerspoon/overlay.html"
 local OVERLAY_HTML = nil
 do
-    local f = io.open(OVERLAY_HTML_PATH, "r")
+    local f = io.open(P.overlayHtml, "r")
     if f then OVERLAY_HTML = f:read("*a"); f:close() end
     if not OVERLAY_HTML or OVERLAY_HTML == "" then
-        log("overlay: WARNING — " .. OVERLAY_HTML_PATH .. " missing or empty; using fallback stub")
+        log("overlay: WARNING — " .. P.overlayHtml .. " missing or empty; using fallback stub")
         OVERLAY_HTML = "<html><body style='background:#222;color:#fff;font:12px sans-serif;padding:12px'>overlay.html missing</body></html>"
     end
 end
 
 local function getTheme()
-    local f = io.open(THEME_FILE, "r")
+    local f = io.open(P.themeFile, "r")
     if f then
         local v = f:read("*a"):gsub("%s+", ""); f:close()
         for _, t in ipairs(AVAILABLE_THEMES) do
@@ -684,7 +849,7 @@ end
 
 local function setTheme(name)
     for _, t in ipairs(AVAILABLE_THEMES) do
-        if t == name then writeFile(THEME_FILE, name); hs.reload(); return end
+        if t == name then writeFile(P.themeFile, name); hs.reload(); return end
     end
 end
 
@@ -704,9 +869,11 @@ end
 local function refreshOverlayLabels() end
 local function setOverlayStatus() end
 
--- Fixed webview viewport. All themes are smaller than this and centered via CSS.
-local OVERLAY_W = 380
-local OVERLAY_H = 80
+-- Fixed webview viewport. The pill sits at the bottom; the transcript card
+-- grows upward from it. Height is tall enough for a ~6-line transcript card
+-- plus the pill and padding; body transparent so empty area doesn't render.
+local OVERLAY_W = 400
+local OVERLAY_H = 220
 
 local function createOverlay()
     local cursor = hs.mouse.absolutePosition()
@@ -771,6 +938,14 @@ local function setOverlayText(text)
     jsEval("lw.setTranscript('" .. jsStr(text) .. "')")
 end
 
+-- Drive refine status visible in the overlay dot (idle/refining/error).
+-- Defined here (after jsEval) and assigned to the forward decl declared
+-- near refineWithOllama. `reason` is the structured error code when state=="error".
+signalRefineState = function(state, reason)
+    jsEval(string.format("lw.setRefineState && lw.setRefineState('%s','%s')",
+        jsStr(state or "idle"), jsStr(reason or "")))
+end
+
 --------------------------------------------------------------------------------
 -- State
 --------------------------------------------------------------------------------
@@ -781,6 +956,80 @@ local ffmpegTask = nil
 local partialTimer = nil
 local partialBusy = false
 local lastChunkCount = 0
+
+-- Audio level metering. ffmpeg's `astats` filter emits RMS dB per ~50ms window
+-- and `ametadata` prints it to stderr (line-buffered, flushes in real time). The
+-- hs.task stream callback parses each chunk; a separate 20Hz timer throttles
+-- the push into the webview (rAF handles final smoothing on the JS side).
+-- Wrapped in do...end so internal constants/state stay out of the main chunk's
+-- 200-local budget. Functions are forward-declared and re-bound inside.
+local parseMeterChunk, startMeterPushing, stopMeterPushing
+do
+    local METER_DB_FLOOR = -60
+    local METER_PUSH_INTERVAL = 0.05
+    -- Noise gate: during the first N seconds of each recording, track the
+    -- loudest ambient reading and use it as the dynamic silence floor for the
+    -- rest of the session. Bars stay at 0 during the calibration window.
+    local METER_CALIBRATION_SEC = 0.4
+    local METER_MIN_RANGE = 20         -- clamp range so a noisy room can't collapse the scale
+    local METER_SPEECH_DB = -25        -- readings above this during calibration = likely speech
+    local METER_FALLBACK_BASELINE = -45  -- used when calibration is contaminated by speech
+
+    local meterPushTimer = nil
+    local meterLevel = 0.0
+    local meterBaseline = nil
+    local meterCalibrationMax = -100
+    local meterCalibrationStart = 0
+
+    parseMeterChunk = function(chunk)
+        for rms in chunk:gmatch("lavfi%.astats%.Overall%.RMS_level=([^\r\n]+)") do
+            local db
+            if rms == "-inf" or rms == "nan" then
+                db = METER_DB_FLOOR
+            else
+                db = tonumber(rms)
+            end
+            if db then
+                if not meterBaseline then
+                    -- Still calibrating: track the loudest reading in the window.
+                    if db > meterCalibrationMax then meterCalibrationMax = db end
+                    if hs.timer.secondsSinceEpoch() - meterCalibrationStart >= METER_CALIBRATION_SEC then
+                        local b = meterCalibrationMax
+                        -- If the user started speaking during calibration, the
+                        -- max is way too high to be noise — use a safe default.
+                        if b > METER_SPEECH_DB then b = METER_FALLBACK_BASELINE end
+                        if b < METER_DB_FLOOR then b = METER_DB_FLOOR end
+                        if b > -METER_MIN_RANGE then b = -METER_MIN_RANGE end
+                        meterBaseline = b
+                    end
+                    meterLevel = 0
+                else
+                    local range = -meterBaseline
+                    if range < METER_MIN_RANGE then range = METER_MIN_RANGE end
+                    local level = (db - meterBaseline) / range
+                    if level < 0 then level = 0 elseif level > 1 then level = 1 end
+                    meterLevel = level
+                end
+            end
+        end
+    end
+
+    startMeterPushing = function()
+        meterLevel = 0
+        meterBaseline = nil
+        meterCalibrationMax = -100
+        meterCalibrationStart = hs.timer.secondsSinceEpoch()
+        if meterPushTimer then meterPushTimer:stop() end
+        meterPushTimer = hs.timer.doEvery(METER_PUSH_INTERVAL, function()
+            jsEval(string.format("window.lw&&window.lw.level&&window.lw.level(%.3f)", meterLevel))
+        end)
+    end
+
+    stopMeterPushing = function()
+        if meterPushTimer then meterPushTimer:stop(); meterPushTimer = nil end
+        meterLevel = 0
+    end
+end
 
 -- Menu bar
 local menuBar = nil
@@ -795,18 +1044,18 @@ local pulseFading = true
 -- Undo state
 local lastInsertedText = nil
 
--- Dictation history (newest first, persisted to ~/.thinking-out-loud/history.json).
--- Replaces the previous "recent.json" 10-entry cap. Entries: {text, time, inserted, app, model, chars}.
+-- Dictation history (newest first, persisted to ~/.thinking-out-loud/history.json
+-- at `P.historyFile`). Replaces the previous "recent.json" 10-entry cap.
+-- Entries: {text, time, inserted, app, model, chars}.
 local MAX_RECENT = 500
-local HISTORY_FILE = CONFIG_DIR .. "/history.json"
 
 local recentDictations = {}
 
 local function loadRecentDictations()
     -- Primary: history.json
-    local f = io.open(HISTORY_FILE, "r")
+    local f = io.open(P.historyFile, "r")
     -- Migration fallback: one-time bootstrap from legacy recent.json
-    if not f then f = io.open(RECENT_FILE, "r") end
+    if not f then f = io.open(P.recentFile, "r") end
     if not f then return end
     local data = f:read("*a"); f:close()
     local ok, result = pcall(hs.json.decode, data)
@@ -819,7 +1068,7 @@ end
 local function saveRecentDictations()
     local ok, json = pcall(hs.json.encode, recentDictations)
     if not ok then return end
-    local f = io.open(HISTORY_FILE, "w")
+    local f = io.open(P.historyFile, "w")
     if f then f:write(json); f:close() end
 end
 
@@ -827,7 +1076,13 @@ loadRecentDictations()
 
 --------------------------------------------------------------------------------
 -- History Dashboard (hs.webview)
+-- Wrapped in do...end so dashboard state/template stays out of the main chunk's
+-- 200-local budget. `openDashboard` is forward-declared (used by menu bar +
+-- Cmd+Shift+H hotkey) and re-bound inside.
 --------------------------------------------------------------------------------
+
+local openDashboard
+do
 
 local DASHBOARD_HTML_PATH = HOME .. "/.hammerspoon/dashboard.html"
 local DASHBOARD_HTML = nil
@@ -852,7 +1107,7 @@ local function pushHistoryToDashboard()
     dashboard:evaluateJavaScript("lw.load('" .. esc .. "')")
 end
 
-local function openDashboard()
+openDashboard = function()
     if dashboard then dashboard:bringToFront(true); return end
 
     -- Remember focus so "paste" can restore the previous app.
@@ -950,6 +1205,8 @@ end
 local function closeDashboard()
     if dashboard then dashboard:delete(); dashboard = nil end
 end
+
+end -- end of Dashboard do-block
 
 -- Auto-stop state
 local silentChunkCount = 0
@@ -1212,8 +1469,12 @@ local function doPartialTranscribe()
 
     partialBusy = true
 
-    -- Batch last 4 completed chunks
-    local startIdx = math.max(1, completed - 3)
+    -- Transcribe ALL completed chunks from the start, every partial tick. This
+    -- gives cumulative text that grows with the dictation, so the overlay
+    -- renders a stable paragraph (only the new tail fades in). Whisper tiny
+    -- on M4 runs ~20× realtime, so 30s of audio transcribes in ~1.5s —
+    -- partialBusy guards against overlap for longer recordings.
+    local startIdx = 1
     local batchList = WHISPER_TMP .. "/partial_concat.txt"
     local f = io.open(batchList, "w")
     for i = startIdx, completed do
@@ -1239,9 +1500,9 @@ local function doPartialTranscribe()
             if code2 ~= 0 or not isRecording then return end
             local text = (out2 or ""):gsub("^%s+", ""):gsub("%s+$", ""):gsub("%s+", " ")
             if text ~= "" and not isHallucination(text) then
-                local display = text
-                if #display > 200 then display = "..." .. display:sub(-197) end
-                setOverlayText(display)
+                -- Show the full cumulative partial — the transcript card wraps and
+                -- grows with content, so no tail-windowing needed.
+                setOverlayText(text)
                 log("partial: " .. text)
             end
         end, whisperArgs)
@@ -1268,10 +1529,15 @@ local function insertTextAtCursor(text, mode)
     end
 end
 
--- Finish insertion after all processing (post-process, refine, hooks)
-local function finishInsertion(text, detectedLang)
+-- Finish insertion after all processing (post-process, refine, hooks).
+-- preRefineText: the post-processed whisper output BEFORE refine ran. Only set
+-- when refine actually ran, so history can distinguish original vs refined.
+local function finishInsertion(text, detectedLang, preRefineText)
     -- Build action context and run pre-insert hooks
     local ctx = buildActionContext(normalizeText(text), detectedLang or getLang(), getOutputMode())
+    if preRefineText then
+        ctx.originalText = preRefineText
+    end
     runPreInsertActions(ctx)
 
     local finalText = normalizeText(ctx.text)
@@ -1340,8 +1606,9 @@ local function insertTranscribedText(text, detectedLang)
     -- Optional LLM refinement (async, skips short text and voice commands)
     if not isVoiceCommand and getRefineMode() and #text >= REFINE_MIN_CHARS then
         setOverlayText("Refining...")
+        local preRefineText = normalizeText(text)
         refineWithOllama(text, function(refined)
-            finishInsertion(refined, detectedLang)
+            finishInsertion(refined, detectedLang, preRefineText)
         end)
     else
         finishInsertion(text, detectedLang)
@@ -1505,18 +1772,31 @@ local function startRecording()
     updateMenuBar()
     hs.sound.getByFile("/System/Library/Sounds/Pop.aiff"):play()
 
-    ffmpegTask = hs.task.new(FFMPEG, function(code, out, err)
-        log("recording: ffmpeg exited " .. tostring(code))
-        if code == 251 or code == 1 then
-            log("recording: ERROR — ffmpeg failed to open audio device '" .. AUDIO_DEVICE .. "'. Check device format (should be :default, :0, :1) and microphone permissions.")
-        end
-    end, {
-        "-f", "avfoundation", "-i", AUDIO_DEVICE,
-        "-ac", "1", "-ar", "16000",
-        "-f", "segment", "-segment_time", "1", "-segment_format", "wav",
-        CHUNK_DIR .. "/chunk_%03d.wav"
-    })
+    ffmpegTask = hs.task.new(FFMPEG,
+        function(code, out, err)
+            log("recording: ffmpeg exited " .. tostring(code))
+            if code == 251 or code == 1 then
+                log("recording: ERROR — ffmpeg failed to open audio device '" .. AUDIO_DEVICE .. "'. Check device format (should be :default, :0, :1) and microphone permissions.")
+            end
+        end,
+        function(task, stdOut, stdErr)
+            -- Stream callback fires incrementally while ffmpeg runs. ametadata
+            -- output comes through stderr (its default destination via av_log),
+            -- which is line-buffered by ffmpeg so RMS values arrive in real time.
+            if stdErr and #stdErr > 0 then parseMeterChunk(stdErr) end
+            return true
+        end,
+        {
+            "-f", "avfoundation", "-i", AUDIO_DEVICE,
+            "-ac", "1", "-ar", "16000",
+            -- Measure RMS per 50ms; ametadata prints to stderr (no file= arg).
+            -- Filters are pass-through, so the audio still flows to the segmenter.
+            "-af", "astats=metadata=1:reset=1:length=0.05,ametadata=mode=print:key=lavfi.astats.Overall.RMS_level",
+            "-f", "segment", "-segment_time", "1", "-segment_format", "wav",
+            CHUNK_DIR .. "/chunk_%03d.wav"
+        })
     ffmpegTask:start()
+    startMeterPushing()
 
     lastChunkCount = 0
     partialBusy = false
@@ -1533,6 +1813,7 @@ local function stopRecording()
 
     if partialTimer then partialTimer:stop(); partialTimer = nil end
     if silenceTimer then silenceTimer:stop(); silenceTimer = nil end
+    stopMeterPushing()
     partialBusy = false
     silentChunkCount = 0
     lastCheckedChunk = 0
@@ -1604,11 +1885,16 @@ end)
 
 --------------------------------------------------------------------------------
 -- Meeting mode
+-- Wrapped in do...end to keep section-local state out of the main chunk's
+-- 200-local budget. `meetingRecording` / `meetingStartTime` / `startMeeting` /
+-- `stopMeeting` are forward-declared at module scope (near buildMenuBarMenu)
+-- and re-bound here via upvalue assignment.
 --------------------------------------------------------------------------------
+
+do
 
 local MEETINGS_DIR = CONFIG_DIR .. "/meetings"
 local MEETING_CHUNK_SECONDS = 30
--- meetingRecording and meetingStartTime are forward-declared before buildMenuBarMenu
 local meetingFfmpegTask = nil
 local meetingChunkDir = WHISPER_TMP .. "/meeting_chunks"
 local meetingTranscript = {}
@@ -2068,6 +2354,8 @@ stopMeeting = function()
     updateMenuBar()
 end
 
+end -- end of Meeting mode do-block
+
 --------------------------------------------------------------------------------
 -- Startup
 --------------------------------------------------------------------------------
@@ -2079,9 +2367,12 @@ if type(hs.microphoneState) == "function" and not hs.microphoneState() then
 end
 
 -- Create default preferred langs file if it doesn't exist
-if readFile(PREFERRED_LANGS_FILE) == "" then
-    writeFile(PREFERRED_LANGS_FILE, "en,pt")
+if readFile(P.preferredLangsFile) == "" then
+    writeFile(P.preferredLangsFile, "en,pt")
 end
+
+-- Global hotkey: Cmd+Shift+H opens the history dashboard from anywhere.
+hs.hotkey.bind({"cmd", "shift"}, "H", function() openDashboard() end)
 
 -- Create menu bar icon
 createMenuBar()
@@ -2097,3 +2388,10 @@ hs.notify.new({
     title = "Thinking Out Loud",
     informativeText = "Loaded (" .. getLang():upper() .. " / " .. getOutputMode():upper() .. enterStatus .. " / " .. getModelName() .. actionsFlag .. ") — hold " .. TRIGGER_KEY
 }):send()
+
+--------------------------------------------------------------------------------
+-- Optional personal extensions. Any .lua file alongside init.lua can be loaded
+-- here. pcall() keeps the dictation core running even if a module is missing
+-- or throws on load.
+--------------------------------------------------------------------------------
+pcall(require, "term_launcher")
